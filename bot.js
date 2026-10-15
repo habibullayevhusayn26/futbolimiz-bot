@@ -632,10 +632,6 @@ async function checkFullAdmin(ctx, username) {
   if (!member || !['creator', 'administrator'].includes(member.status)) {
     throw new Error('Bot kanalida administrator bo\'lishi kerak.');
   }
-  if (chat.type === 'channel' && member.status === 'administrator' && member.can_post_messages === false) {
-    throw new Error('Botga kanalda post yuborish huquqini bering.');
-  }
-
   let inviteLink = '';
   if (!chat.username) {
     if (member.status !== 'creator' && member.can_invite_users !== true) {
@@ -655,18 +651,25 @@ async function checkFullAdmin(ctx, username) {
 }
 
 function createRequiredChatRequestButton(text, requestId, chatIsChannel) {
-  const botAdministratorRights = chatIsChannel
-    ? { can_manage_chat: true, can_post_messages: true, can_invite_users: true }
-    : { can_manage_chat: true, can_delete_messages: true, can_invite_users: true };
+  const administratorRights = {
+    is_anonymous: false,
+    can_manage_chat: true,
+    can_delete_messages: false,
+    can_manage_video_chats: false,
+    can_restrict_members: false,
+    can_promote_members: false,
+    can_change_info: false,
+    can_invite_users: true,
+    ...(chatIsChannel ? { can_post_messages: false } : {})
+  };
   return {
     text,
     request_chat: {
       request_id: requestId,
       chat_is_channel: chatIsChannel,
       bot_is_member: false,
-      bot_administrator_rights: botAdministratorRights,
-      request_title: true,
-      request_username: true
+      user_administrator_rights: { ...administratorRights },
+      bot_administrator_rights: { ...administratorRights }
     }
   };
 }
@@ -711,11 +714,16 @@ async function startRequiredChatPicker(ctx) {
     expiresAt: Date.now() + 10 * 60 * 1000
   });
 
-  await ctx.telegram.sendMessage(
-    ctx.chat.id,
-    'Kanal yoki guruhni tanlang. Telegram botni tanlangan joyga admin qilish huquqlarini so\'raydi.',
-    { reply_markup: createRequiredChatPickerKeyboard(channelRequestId, groupRequestId) }
-  );
+  try {
+    await ctx.telegram.sendMessage(
+      ctx.chat.id,
+      'Kanal yoki guruhni tanlang. Telegram botni tanlangan joyga admin qilish huquqlarini so\'raydi.',
+      { reply_markup: createRequiredChatPickerKeyboard(channelRequestId, groupRequestId) }
+    );
+  } catch (error) {
+    clearRequiredChatRequests(userId);
+    throw error;
+  }
 }
 
 async function handleSharedRequiredChat(ctx, sharedChat) {
@@ -2194,7 +2202,12 @@ bot.action('admin:subscription_private', async (ctx) => {
     return ctx.reply('Kanal yoki guruh tanlashni botning shaxsiy chatida boshlang.');
   }
   ctx.session = { adminPanelActive: true };
-  return startRequiredChatPicker(ctx);
+  try {
+    return await startRequiredChatPicker(ctx);
+  } catch (error) {
+    console.error('Required channel picker could not be sent:', error.response?.description || error.message);
+    return ctx.reply(`Kanal yoki guruh tanlash oynasini ochib bo'lmadi: ${error.response?.description || error.message}`);
+  }
 });
 
 bot.action('admin:subscription_private_cancel', async (ctx) => {

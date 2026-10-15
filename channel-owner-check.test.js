@@ -68,11 +68,18 @@ test('offers Telegram chat selection buttons that request bot admin rights', () 
   const keyboard = createRequiredChatPickerKeyboard(11, 22);
 
   assert.equal(keyboard.keyboard[0][0].request_chat.chat_is_channel, true);
-  assert.deepEqual(keyboard.keyboard[0][0].request_chat.bot_administrator_rights, {
-    can_manage_chat: true,
-    can_post_messages: true,
-    can_invite_users: true
-  });
   assert.equal(keyboard.keyboard[1][0].request_chat.chat_is_channel, false);
-  assert.equal(keyboard.keyboard[1][0].request_chat.bot_administrator_rights.can_invite_users, true);
+  for (const row of keyboard.keyboard.slice(0, 2)) {
+    const requestChat = row[0].request_chat;
+    const botRights = requestChat.bot_administrator_rights;
+    const userRights = requestChat.user_administrator_rights;
+    assert.deepEqual(Object.keys(botRights).sort(), Object.keys(userRights).sort());
+    assert.equal(botRights.can_manage_chat, true);
+    assert.equal(botRights.can_invite_users, true);
+    assert.equal(botRights.is_anonymous, false);
+    assert.equal(Object.hasOwn(requestChat, 'request_title'), false);
+    assert.equal(Object.hasOwn(requestChat, 'request_username'), false);
+  }
+  assert.equal(keyboard.keyboard[0][0].request_chat.bot_administrator_rights.can_post_messages, false);
+  assert.equal(Object.hasOwn(keyboard.keyboard[1][0].request_chat.bot_administrator_rights, 'can_post_messages'), false);
 });
