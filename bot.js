@@ -335,9 +335,9 @@ const premiumEmojis = {
   web: '<tg-emoji emoji-id="5231482153228835967">🌐</tg-emoji>'
 };
 const defaultMessages = {
-  welcome: `${premiumEmojis.welcome} Assalomu alaykum {nickname}\n\n${premiumEmojis.bot} Kanal yoki guruhingizni ulash uchun “Kanal/guruh ulash” tugmasini bosing va chatni tanlang. Boshqarish uchun /mychats buyrug\'ini yuboring.`,
+  welcome: `${premiumEmojis.welcome} Assalomu alaykum {nickname}\n\n${premiumEmojis.bot} Kanal yoki guruhingizni ulash uchun “Kanal/guruh ulash” tugmasini bosing yoki /connect yuboring, so\'ng chatni tanlang. Boshqarish uchun /mychats buyrug\'ini yuboring.`,
   subscriptionRequired: `${premiumEmojis.warning} Botdan foydalanish uchun quyidagi kanallarga obuna bo\'ling`,
-  help: `${premiumEmojis.web} Kanal yoki guruhingizni ulash uchun botning Start xabaridagi “Kanal/guruh ulash” tugmasini bosing, chatni tanlang va Telegram so\'ragan admin huquqlarini tasdiqlang. Chatlaringizni /mychats bilan boshqaring; avtomatik qabulni to\'xtatib, kutilayotgan so\'rovlarni tugma bilan tasdiqlashingiz mumkin.`
+  help: `${premiumEmojis.web} Kanal yoki guruhingizni ulash uchun botning Start xabaridagi “Kanal/guruh ulash” tugmasini bosing yoki /connect yuboring, chatni tanlang va Telegram so\'ragan admin huquqlarini tasdiqlang. Chatlaringizni /mychats bilan boshqaring; avtomatik qabulni to\'xtatib, kutilayotgan so\'rovlarni tugma bilan tasdiqlashingiz mumkin.`
 };
 function isAdmin(ctx) {
   const telegramId = Number(ctx.from?.id);
@@ -736,6 +736,15 @@ async function startChatPicker(ctx, purpose) {
   }
 }
 
+async function openJoinRequestChatPicker(ctx) {
+  try {
+    return await startChatPicker(ctx, 'join_requests');
+  } catch (error) {
+    console.error('Join-request chat picker could not be sent:', error.response?.description || error.message);
+    return ctx.reply(`Kanal yoki guruh tanlash oynasini ochib bo'lmadi: ${error.response?.description || error.message}`);
+  }
+}
+
 async function handleSharedRequiredChat(ctx, sharedChat) {
   const requesterId = Number(ctx.from?.id);
   const request = pendingChatSelections.get(sharedChat.request_id);
@@ -1118,8 +1127,7 @@ bot.command('connect', async (ctx) => {
   const chat = ctx.chat;
   const argument = getChatCommand(ctx).replace(/^\/connect(?:@\w+)?\s*/i, '').trim();
   if (chat?.type === 'private') {
-    if (argument) return ctx.reply('Kod olish uchun argumentlarsiz /connect yuboring.');
-    return issueJoinRequestLinkCode(ctx);
+    return openJoinRequestChatPicker(ctx);
   }
   if (!chat || !['group', 'supergroup'].includes(chat.type)) {
     return;
@@ -2256,12 +2264,7 @@ bot.action('welcome:join_chat_connect', async (ctx) => {
   if (ctx.chat?.type !== 'private') {
     return ctx.reply('Kanal yoki guruh ulash uchun botning shaxsiy chatida Start xabaridagi tugmani bosing.');
   }
-  try {
-    return await startChatPicker(ctx, 'join_requests');
-  } catch (error) {
-    console.error('Join-request chat picker could not be sent:', error.response?.description || error.message);
-    return ctx.reply(`Kanal yoki guruh tanlash oynasini ochib bo'lmadi: ${error.response?.description || error.message}`);
-  }
+  return openJoinRequestChatPicker(ctx);
 });
 
 bot.action('welcome:required_list', async (ctx) => {
@@ -2424,12 +2427,7 @@ bot.on('text', async (ctx) => {
     if (ctx.chat?.type !== 'private') {
       return ctx.reply('Kanal yoki guruh ulash uchun botning shaxsiy chatidagi Start tugmasidan foydalaning.');
     }
-    try {
-      return await startChatPicker(ctx, 'join_requests');
-    } catch (error) {
-      console.error('Join-request chat picker could not be sent:', error.response?.description || error.message);
-      return ctx.reply(`Kanal yoki guruh tanlash oynasini ochib bo'lmadi: ${error.response?.description || error.message}`);
-    }
+    return openJoinRequestChatPicker(ctx);
   }
   if (value === 'Ulangan kanallar ro\'yxati') return showJoinRequestChats(ctx);
   if (value === 'Yordam') return ctx.reply(configuredMessage('help', ctx), replyOptions());
@@ -2558,6 +2556,7 @@ module.exports = {
   checkFullAdmin,
   createRequiredChatPickerKeyboard,
   editCallbackMessage,
+  openJoinRequestChatPicker,
   verifyMiniAppInitData
 };
 

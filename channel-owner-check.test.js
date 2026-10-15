@@ -1,6 +1,10 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { checkFullAdmin, createRequiredChatPickerKeyboard } = require('./bot');
+const {
+  checkFullAdmin,
+  createRequiredChatPickerKeyboard,
+  openJoinRequestChatPicker
+} = require('./bot');
 
 function createContext({
   userStatus = 'creator',
@@ -92,4 +96,25 @@ test('requests delete and invite rights when selecting a chat for join-request m
     assert.equal(rights.can_delete_messages, true);
     assert.equal(rights.can_invite_users, true);
   }
+});
+
+test('/connect opens the chat picker with join-request management rights', async () => {
+  const calls = [];
+  const ctx = {
+    from: { id: 123 },
+    chat: { id: 123, type: 'private' },
+    telegram: {
+      sendMessage: async (...args) => calls.push(args)
+    },
+    reply: async (text) => calls.push([text])
+  };
+
+  await openJoinRequestChatPicker(ctx);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 123);
+  const keyboard = calls[0][2].reply_markup.keyboard;
+  assert.equal(keyboard[0][0].request_chat.chat_is_channel, true);
+  assert.equal(keyboard[1][0].request_chat.chat_is_channel, false);
+  assert.equal(keyboard[0][0].request_chat.bot_administrator_rights.can_delete_messages, true);
 });
