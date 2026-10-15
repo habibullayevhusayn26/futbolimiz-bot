@@ -8,6 +8,9 @@
   const list = document.getElementById('match-list');
   const statusMessage = document.getElementById('status-message');
   const dateInput = document.getElementById('match-date');
+  const matchControls = document.getElementById('match-controls');
+  const liveBanner = document.querySelector('.live-banner');
+  const standingsSeason = document.getElementById('standings-season');
   const leagueSelectButton = document.getElementById('league-select-button');
   const leagueSelectLabel = document.getElementById('league-select-label');
   const leagueOptions = document.getElementById('league-options');
@@ -15,8 +18,10 @@
   const updatedAt = document.getElementById('updated-at');
   let selectedFilter = 'all';
   let selectedLeague = 'all';
+  let selectedView = 'matches';
   let currentLeagues = [];
   let currentEvents = [];
+  let standingsRequestId = 0;
   let refreshTimer;
 
   function localDateString(date) {
@@ -79,22 +84,28 @@
   async function loadScoreboard() {
     const date = dateInput.value;
     if (!date) return;
-    setMessage();
-    showLoading();
+    if (selectedView === 'matches') {
+      setMessage();
+      showLoading();
+    }
     try {
       const response = await fetch(`/api/mini-app/scoreboard?date=${encodeURIComponent(apiDate(date))}`);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'O‘yinlarni yuklab bo‘lmadi.');
       currentEvents = payload.events;
       updateLeagues(payload.leagues);
-      renderEvents();
+      if (selectedView === 'matches') renderEvents();
       updatedAt.textContent = `Yangilandi ${formattedTime(new Date().toISOString())}`;
-      if (payload.partial) {
+      if (payload.partial && selectedView === 'matches') {
         setMessage('Ayrim musobaqalar ma’lumotini olib bo‘lmadi. Ko‘rsatilgan o‘yinlar mavjud ma’lumotlardan tuzildi.', 'warning');
       }
     } catch (error) {
-      list.replaceChildren();
-      setMessage(error.message || 'Ulanishda xatolik. Qayta urinib ko‘ring.', 'error');
+      if (selectedView === 'matches') {
+        list.replaceChildren();
+        setMessage(error.message || 'Ulanishda xatolik. Qayta urinib ko‘ring.', 'error');
+      } else {
+        console.warn('Match scoreboard refresh failed:', error);
+      }
     }
   }
 
@@ -136,7 +147,131 @@
     updateLeagues(currentLeagues);
     setLeagueMenuOpen(false);
     leagueSelectButton.focus();
-    renderEvents();
+    if (selectedView === 'standings') loadStandings();
+    else renderEvents();
+  }
+
+  async function loadStandings() {
+    const requestId = ++standingsRequestId;
+    const league = selectedLeague;
+    setMessage();
+    standingsSeason.hidden = true;
+    list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
+    const params = new URLSearchParams({ league, season: String(new Date().getFullYear()) });
+    try {
+      const response = await fetch(`/api/mini-app/standings?${params}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Turnir jadvalini yuklab bo‘lmadi.');
+      if (requestId !== standingsRequestId) return;
+      renderStandings(payload);
+      if (payload.partial) {
+        setMessage(`Ayrim jadvallar yuklanmadi: ${payload.failedLeagues.join(', ')}.`, 'warning');
+      }
+    } catch (error) {
+      if (requestId !== standingsRequestId) return;
+      list.replaceChildren();
+      setMessage(error.message || 'Turnir jadvalini yuklab bo‘lmadi. Qayta urinib ko‘ring.', 'error');
+    }
+  }
+
+  function renderStandings(payload) {
+    list.replaceChildren();
+    list.classList.add('standings-list');
+    const tables = payload.tables || [];
+    if (!tables.length) {
+      list.innerHTML = '<div class="empty-state"><div class="empty-icon">🏆</div><div class="empty-title">Turnir jadvali topilmadi</div><div>Bu mavsum uchun jadval ma’lumoti hozircha mavjud emas.</div></div>';
+      return;
+    }
+
+    standingsSeason.textContent = `Joriy mavsum · ${tables[0].season}`;
+    standingsSeason.hidden = false;
+    for (const table of tables) {
+      const section = document.createElement('section');
+      section.className = 'standings-card';
+      const heading = document.createElement('div');
+      heading.className = 'standings-heading';
+      const title = document.createElement('h2');
+      title.textContent = table.leagueName;
+      const teamCount = document.createElement('span');
+      teamCount.textContent = `${table.teams.length} JAMOA`;
+      heading.append(title, teamCount);
+      section.append(heading);
+
+      if (!table.teams.length) {
+        const empty = document.createElement('p');
+        empty.className = 'standings-empty';
+        empty.textContent = 'Hozircha o‘ynalgan uchrashuvlar yo‘q.';
+        section.append(empty);
+      } else {
+        const scroll = document.createElement('div');
+        scroll.className = 'standings-scroll';
+        const standingsTable = document.createElement('table');
+        standingsTable.className = 'standings-table';
+        standingsTable.setAttribute('aria-label', `${table.leagueName} turnir jadvali`);
+        const header = document.createElement('thead');
+        header.innerHTML = '<tr><th scope="col">#</th><th scope="col" class="team-column">JAMOA</th><th scope="col">O‘</th><th scope="col">G</th><th scope="col">D</th><th scope="col">M</th><th scope="col">TG</th><th scope="col">O‘G</th><th scope="col">+/−</th><th scope="col" class="points-column">OCHKO</th><th scope="col">FORMA</th></tr>';
+        const body = document.createElement('tbody');
+        for (const team of table.teams) {
+          const row = document.createElement('tr');
+          const rank = document.createElement('td');
+          rank.className = 'rank-cell';
+          rank.textContent = String(team.rank);
+          const name = document.createElement('th');
+          name.scope = 'row';
+          name.className = 'team-column';
+          const teamCell = document.createElement('span');
+          teamCell.className = 'standing-team';
+          if (team.logo) {
+            const logo = document.createElement('img');
+            logo.src = team.logo;
+            logo.alt = '';
+            logo.loading = 'lazy';
+            logo.onerror = () => logo.remove();
+            teamCell.append(logo);
+          }
+          const teamName = document.createElement('span');
+          teamName.textContent = team.name;
+          teamCell.append(teamName);
+          name.append(teamCell);
+          row.append(rank, name);
+          for (const value of [
+            team.played,
+            team.wins,
+            team.draws,
+            team.losses,
+            team.goalsFor,
+            team.goalsAgainst,
+            team.goalDifference > 0 ? `+${team.goalDifference}` : String(team.goalDifference)
+          ]) {
+            const cell = document.createElement('td');
+            cell.textContent = String(value);
+            row.append(cell);
+          }
+          const points = document.createElement('td');
+          points.className = 'points-cell';
+          points.textContent = String(team.points);
+          row.append(points);
+          const form = document.createElement('td');
+          form.className = 'form-cell';
+          const formDots = document.createElement('span');
+          formDots.className = 'form-dots';
+          for (const result of team.form) {
+            const dot = document.createElement('span');
+            dot.className = `form-dot ${result.toLowerCase()}`;
+            dot.textContent = result;
+            formDots.append(dot);
+          }
+          form.append(formDots);
+          row.append(form);
+          body.append(row);
+        }
+        standingsTable.append(header, body);
+        scroll.append(standingsTable);
+        section.append(scroll);
+      }
+      list.append(section);
+    }
+    updatedAt.textContent = `Yangilandi ${formattedTime(new Date().toISOString())}`;
   }
 
   function teamMarkup(team, away = false) {
@@ -188,6 +323,7 @@
   }
 
   function renderEvents() {
+    list.classList.remove('standings-list');
     const liveMatches = currentEvents.filter((event) => event.state === 'in');
     liveCount.textContent = String(liveMatches.length);
     const filteredEvents = currentEvents.filter((event) => {
@@ -228,6 +364,26 @@
   }
 
   dateInput.value = tashkentDateString(new Date());
+  document.querySelectorAll('.view-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      selectedView = tab.dataset.view;
+      document.querySelectorAll('.view-tab').forEach((item) => {
+        const active = item === tab;
+        item.classList.toggle('active', active);
+        item.setAttribute('aria-pressed', String(active));
+      });
+      const isStandings = selectedView === 'standings';
+      matchControls.hidden = isStandings;
+      liveBanner.hidden = isStandings;
+      if (isStandings) loadStandings();
+      else {
+        standingsRequestId += 1;
+        standingsSeason.hidden = true;
+        setMessage();
+        renderEvents();
+      }
+    });
+  });
   dateInput.addEventListener('change', loadScoreboard);
   leagueSelectButton.addEventListener('click', () => {
     const open = leagueOptions.hidden;

@@ -27,18 +27,25 @@
       <span class="live-count" id="live-count">0</span>
     </section>
 
+    <section class="view-tabs" aria-label="Bo‘limni tanlang">
+      <button class="view-tab active" data-view="matches" type="button" aria-pressed="true">O‘yinlar</button>
+      <button class="view-tab" data-view="standings" type="button" aria-pressed="false">Turnir jadvali</button>
+    </section>
+
     <section class="controls" aria-label="O'yinlarni saralash">
-      <div class="filter-tabs" role="tablist" aria-label="O'yin holati">
-        <button class="filter-tab active" data-filter="all" type="button">Barchasi</button>
-        <button class="filter-tab" data-filter="in" type="button">Jonli</button>
-        <button class="filter-tab" data-filter="pre" type="button">Jadval</button>
-        <button class="filter-tab" data-filter="post" type="button">Natijalar</button>
-      </div>
-      <div class="selection-row">
-        <button class="date-step" id="previous-day" type="button" aria-label="Oldingi kun">‹</button>
-        <input id="match-date" type="date" aria-label="O'yin sanasi">
-        <button class="date-step" id="next-day" type="button" aria-label="Keyingi kun">›</button>
-        <button class="today-button" id="today-button" type="button">Bugun</button>
+      <div class="match-controls" id="match-controls">
+        <div class="filter-tabs" role="tablist" aria-label="O'yin holati">
+          <button class="filter-tab active" data-filter="all" type="button">Barchasi</button>
+          <button class="filter-tab" data-filter="in" type="button">Jonli</button>
+          <button class="filter-tab" data-filter="pre" type="button">Jadval</button>
+          <button class="filter-tab" data-filter="post" type="button">Natijalar</button>
+        </div>
+        <div class="selection-row">
+          <button class="date-step" id="previous-day" type="button" aria-label="Oldingi kun">‹</button>
+          <input id="match-date" type="date" aria-label="O'yin sanasi">
+          <button class="date-step" id="next-day" type="button" aria-label="Keyingi kun">›</button>
+          <button class="today-button" id="today-button" type="button">Bugun</button>
+        </div>
       </div>
       <div class="league-select-wrap">
         <span class="league-filter-icon" aria-hidden="true">
@@ -59,16 +66,17 @@
             <svg class="league-filter-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
           </button>
         </span>
-        <span class="league-filter-count" id="league-filter-count">7 LIGA</span>
+        <span class="league-filter-count" id="league-filter-count">6 LIGA</span>
         <div class="league-options" id="league-options" role="listbox" aria-label="Musobaqani tanlang" hidden></div>
       </div>
     </section>
 
     <div class="status-message" id="status-message" role="status" aria-live="polite"></div>
+    <div class="standings-season" id="standings-season" hidden></div>
     <section class="match-list" id="match-list" aria-label="Futbol o'yinlari"></section>
 
     <footer class="footer">
-      <span>Ma'lumotlar ESPN va TheSportsDB'dan</span>
+      <span>Ma'lumotlar ESPN'dan</span>
       <span id="updated-at"></span>
     </footer>
   </main>

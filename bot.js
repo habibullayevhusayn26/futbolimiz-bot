@@ -145,12 +145,14 @@ const soccerLeagues = [
   { id: 'esp.1', name: 'LaLiga' },
   { id: 'fra.1', name: 'Ligue 1' },
   { id: 'ita.1', name: 'A Seriya' },
-  { id: 'ger.1', name: 'Bundesliga' },
-  { id: '4794', name: 'O‘zbekiston Superligasi', source: 'thesportsdb' }
+  { id: 'ger.1', name: 'Bundesliga' }
 ];
 const soccerScoreboardCache = new Map();
 const soccerScoreboardRequests = new Map();
+const soccerStandingsCache = new Map();
+const soccerStandingsRequests = new Map();
 const scoreboardCacheTtlMs = 30_000;
+const standingsCacheTtlMs = 5 * 60_000;
 const scoreboardDatePattern = /^\d{8}$/;
 
 function isValidScoreboardDate(date) {
@@ -195,37 +197,143 @@ function normalizeSoccerEvent(event, league) {
   };
 }
 
-function normalizeTheSportsDbEvent(event, league) {
-  if (!event.strHomeTeam || !event.strAwayTeam) return null;
-  const status = String(event.strStatus || '').toUpperCase();
-  const state = ['FT', 'AET', 'PEN'].includes(status)
-    ? 'post'
-    : ['LIVE', '1H', 'HT', '2H', 'ET', 'P', 'BT', 'INT'].includes(status)
-      ? 'in'
-      : 'pre';
-  const timestamp = event.dateEventLocal && event.strTimeLocal
-    ? `${event.dateEventLocal}T${event.strTimeLocal}+05:00`
-    : event.strTimestamp || `${event.dateEvent}T${event.strTime || '00:00:00'}Z`;
+function normalizeSoccerStandings(events, league, season) {
+  const teams = new Map();
+  const seasonStart = Date.parse(season.startDate);
+  const completedEvents = events
+    .filter((event) => {
+      const competition = event.competitions?.[0];
+      const eventDate = Date.parse(event.date || competition?.date || '');
+      return competition?.status?.type?.state === 'post' &&
+        Number.isFinite(eventDate) &&
+        eventDate >= seasonStart &&
+        (league.id !== 'uefa.champions' || event.season?.slug === 'league-phase');
+    })
+    .sort((left, right) => Date.parse(left.date) - Date.parse(right.date));
+
+  for (const event of completedEvents) {
+    const competitors = event.competitions[0].competitors || [];
+    const home = competitors.find((competitor) => competitor.homeAway === 'home');
+    const away = competitors.find((competitor) => competitor.homeAway === 'away');
+    if (home?.score === null || home?.score === undefined || String(home.score).trim() === '' ||
+        away?.score === null || away?.score === undefined || String(away.score).trim() === '') continue;
+    const homeGoals = Number(home?.score);
+    const awayGoals = Number(away?.score);
+    if (!home?.team || !away?.team || !Number.isFinite(homeGoals) || !Number.isFinite(awayGoals)) continue;
+
+    const getTeam = (competitor) => {
+      const id = competitor.team.id || competitor.id;
+      if (!teams.has(id)) {
+        teams.set(id, {
+          id,
+          name: competitor.team.displayName || competitor.team.name || '',
+          logo: competitor.team.logo || '',
+          played: 0,
+          wins: 0,
+          draws: 0,
+          losses: 0,
+          goalsFor: 0,
+          goalsAgainst: 0,
+          goalDifference: 0,
+          points: 0,
+          form: []
+        });
+      }
+      return teams.get(id);
+    };
+
+    const homeTeam = getTeam(home);
+    const awayTeam = getTeam(away);
+    homeTeam.played += 1;
+    awayTeam.played += 1;
+    homeTeam.goalsFor += homeGoals;
+    homeTeam.goalsAgainst += awayGoals;
+    awayTeam.goalsFor += awayGoals;
+    awayTeam.goalsAgainst += homeGoals;
+
+    if (homeGoals > awayGoals) {
+      homeTeam.wins += 1;
+      awayTeam.losses += 1;
+      homeTeam.points += 3;
+      homeTeam.form.push('W');
+      awayTeam.form.push('L');
+    } else if (homeGoals < awayGoals) {
+      awayTeam.wins += 1;
+      homeTeam.losses += 1;
+      awayTeam.points += 3;
+      homeTeam.form.push('L');
+      awayTeam.form.push('W');
+    } else {
+      homeTeam.draws += 1;
+      awayTeam.draws += 1;
+      homeTeam.points += 1;
+      awayTeam.points += 1;
+      homeTeam.form.push('D');
+      awayTeam.form.push('D');
+    }
+  }
+
+  const table = [...teams.values()]
+    .map((team) => ({ ...team, goalDifference: team.goalsFor - team.goalsAgainst, form: team.form.slice(-5) }))
+    .sort((left, right) =>
+      right.points - left.points ||
+      right.goalDifference - left.goalDifference ||
+      right.goalsFor - left.goalsFor ||
+      right.wins - left.wins ||
+      left.name.localeCompare(right.name)
+    )
+    .map((team, index) => ({ rank: index + 1, ...team }));
+
   return {
-    id: event.idEvent,
     leagueId: league.id,
     leagueName: league.name,
-    startTime: /(?:Z|[+-]\d{2}:\d{2})$/i.test(timestamp) ? timestamp : `${timestamp}Z`,
-    state,
-    status: event.strStatus || '',
-    clock: event.strProgress || '',
-    home: {
-      name: event.strHomeTeam,
-      logo: event.strHomeTeamBadge || '',
-      score: event.intHomeScore ?? ''
-    },
-    away: {
-      name: event.strAwayTeam,
-      logo: event.strAwayTeamBadge || '',
-      score: event.intAwayScore ?? ''
-    },
-    venue: event.strVenue || ''
+    season: season.displayName || String(season.year),
+    updatedAt: new Date().toISOString(),
+    teams: table
   };
+}
+
+function fetchSoccerLeagueStandings(league, year, fetchImpl) {
+  const cacheKey = `${league.id}:${year}`;
+  const cached = soccerStandingsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.data);
+  const pending = soccerStandingsRequests.get(cacheKey);
+  if (pending) return pending;
+
+  const request = (async () => {
+    const url = new URL(`https://site.api.espn.com/apis/site/v2/sports/soccer/${league.id}/scoreboard`);
+    url.searchParams.set('dates', String(year));
+    url.searchParams.set('limit', '1000');
+    const response = await fetchImpl(url, { signal: AbortSignal.timeout(20_000) });
+    if (!response.ok) throw new Error(`ESPN ${response.status} (${league.id})`);
+    const payload = await response.json();
+    const season = payload.leagues?.[0]?.season;
+    if (!season?.startDate || !Array.isArray(payload.events)) {
+      throw new Error(`ESPN standings data is unavailable for ${league.name}.`);
+    }
+    const data = normalizeSoccerStandings(payload.events, league, season);
+    soccerStandingsCache.set(cacheKey, { data, expiresAt: Date.now() + standingsCacheTtlMs });
+    return data;
+  })().finally(() => soccerStandingsRequests.delete(cacheKey));
+  soccerStandingsRequests.set(cacheKey, request);
+  return request;
+}
+
+async function fetchSoccerStandings(leagueId, year, fetchImpl = fetch) {
+  const leagues = leagueId === 'all'
+    ? soccerLeagues
+    : soccerLeagues.filter((league) => league.id === leagueId);
+  if (!leagues.length) throw new Error('Noma’lum musobaqa tanlandi.');
+
+  const results = await Promise.allSettled(
+    leagues.map((league) => fetchSoccerLeagueStandings(league, year, fetchImpl))
+  );
+  const tables = results.filter((result) => result.status === 'fulfilled').map((result) => result.value);
+  const failedLeagues = results
+    .map((result, index) => result.status === 'rejected' ? leagues[index].name : null)
+    .filter(Boolean);
+  if (!tables.length) throw new Error('Turnir jadvallarini hozir olib bo\'lmadi.');
+  return { season: String(year), tables, partial: failedLeagues.length > 0, failedLeagues };
 }
 
 async function loadSoccerScoreboard(date, fetchImpl) {
@@ -238,31 +346,16 @@ async function loadSoccerScoreboard(date, fetchImpl) {
       const league = soccerLeagues[nextLeagueIndex];
       nextLeagueIndex += 1;
       try {
-        const url = league.source === 'thesportsdb'
-          ? new URL('https://www.thesportsdb.com/api/v1/json/3/eventsseason.php')
-          : new URL(`https://site.api.espn.com/apis/site/v2/sports/soccer/${league.id}/scoreboard`);
-        if (league.source === 'thesportsdb') {
-          url.searchParams.set('id', league.id);
-          url.searchParams.set('s', date.slice(0, 4));
-        } else {
-          url.searchParams.set('dates', date);
-          url.searchParams.set('limit', '100');
-        }
+        const url = new URL(`https://site.api.espn.com/apis/site/v2/sports/soccer/${league.id}/scoreboard`);
+        url.searchParams.set('dates', date);
+        url.searchParams.set('limit', '100');
         const response = await fetchImpl(url, { signal: AbortSignal.timeout(10_000) });
-        if (!response.ok) throw new Error(`${league.source || 'ESPN'} ${response.status} (${league.id})`);
+        if (!response.ok) throw new Error(`ESPN ${response.status} (${league.id})`);
         const payload = await response.json();
         successfulLeagues += 1;
-        if (league.source === 'thesportsdb') {
-          events.push(...(payload.events || [])
-            .filter((event) => String(event.idLeague) === league.id &&
-              event.dateEvent === `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`)
-            .map((event) => normalizeTheSportsDbEvent(event, league))
-            .filter(Boolean));
-        } else {
-          events.push(...(payload.events || [])
-            .map((event) => normalizeSoccerEvent(event, league))
-            .filter(Boolean));
-        }
+        events.push(...(payload.events || [])
+          .map((event) => normalizeSoccerEvent(event, league))
+          .filter(Boolean));
       } catch (error) {
         console.error(`Scoreboard request failed for ${league.name}:`, error.message);
       }
@@ -309,6 +402,24 @@ app.get('/api/mini-app/scoreboard', async (req, res) => {
   } catch (error) {
     console.error('Soccer scoreboard request failed:', error.message);
     return res.status(502).json({ ok: false, error: 'O\'yinlar ma\'lumotini olib bo\'lmadi. Keyinroq qayta urinib ko\'ring.' });
+  }
+});
+
+app.get('/api/mini-app/standings', async (req, res) => {
+  const leagueId = String(req.query.league || 'all');
+  const season = String(req.query.season || new Date().getFullYear());
+  if (leagueId !== 'all' && !soccerLeagues.some((league) => league.id === leagueId)) {
+    return res.status(400).json({ ok: false, error: 'Tanlangan musobaqa mavjud emas.' });
+  }
+  if (!/^\d{4}$/.test(season) || Number(season) < 2000 || Number(season) > 2100) {
+    return res.status(400).json({ ok: false, error: 'Mavsum yilini to‘g‘ri kiriting.' });
+  }
+  try {
+    const standings = await fetchSoccerStandings(leagueId, Number(season));
+    return res.status(200).json(standings);
+  } catch (error) {
+    console.error('Soccer standings request failed:', error.message);
+    return res.status(502).json({ ok: false, error: 'Turnir jadvalini olib bo‘lmadi. Keyinroq qayta urinib ko‘ring.' });
   }
 });
 
@@ -2764,12 +2875,13 @@ module.exports = {
   checkFullAdmin,
   createRequiredChatPickerKeyboard,
   fetchSoccerScoreboard,
+  fetchSoccerStandings,
   getMiniAppUrl,
   editCallbackMessage,
   isValidScoreboardDate,
   mainMenuCommands,
   normalizeSoccerEvent,
-  normalizeTheSportsDbEvent,
+  normalizeSoccerStandings,
   openJoinRequestChatPicker,
   registerMainMenuCommands,
   soccerLeagues,

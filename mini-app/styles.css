@@ -124,6 +124,229 @@ h1 {
   margin-bottom: 17px;
 }
 
+.live-banner[hidden],
+.match-controls[hidden] {
+  display: none;
+}
+
+.view-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-bottom: 13px;
+  padding: 5px;
+  border: 1px solid rgba(225, 234, 246, .8);
+  border-radius: 18px;
+  background: rgba(242, 247, 253, .76);
+  box-shadow: inset 0 1px 2px rgba(49, 74, 106, .045);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.view-tab {
+  min-height: 40px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  color: #748294;
+  font-size: 12px;
+  font-weight: 750;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.view-tab.active {
+  border-color: rgba(255, 255, 255, .95);
+  background: linear-gradient(145deg, #fff, #e3f0ff);
+  box-shadow: 0 4px 12px rgba(33, 111, 197, .12), inset 0 1px 0 #fff;
+  color: #1765a8;
+}
+
+.view-tab:active {
+  transform: scale(.98);
+}
+
+.standings-season {
+  margin: 0 2px 12px;
+  color: #788697;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.match-list.standings-list {
+  gap: 14px;
+}
+
+.standings-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(224, 233, 244, .9);
+  border-radius: 18px;
+  background: linear-gradient(155deg, #fff, #fbfdff);
+  box-shadow: 0 5px 17px rgba(37, 61, 90, .065), inset 0 1px 0 #fff;
+}
+
+.standings-heading {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid rgba(224, 233, 244, .8);
+}
+
+.standings-heading h2 {
+  overflow: hidden;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.standings-heading > span {
+  flex: 0 0 auto;
+  padding: 5px 7px;
+  border-radius: 8px;
+  background: #edf5ff;
+  color: #3c78b0;
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: .04em;
+}
+
+.standings-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-color: #d6e1ed transparent;
+  scrollbar-width: thin;
+}
+
+.standings-table {
+  width: 100%;
+  min-width: 590px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.standings-table thead th {
+  height: 34px;
+  border-bottom: 1px solid #edf1f6;
+  background: #f8faff;
+  color: #8793a2;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .035em;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.standings-table thead th:first-child,
+.standings-table tbody .rank-cell {
+  width: 35px;
+  padding-left: 11px;
+  color: #8b98a8;
+  text-align: left;
+}
+
+.standings-table .team-column {
+  width: 35%;
+  min-width: 150px;
+  text-align: left;
+}
+
+.standings-table tbody th,
+.standings-table tbody td {
+  height: 42px;
+  border-bottom: 1px solid #f0f3f7;
+  color: #465466;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.standings-table tbody tr:last-child th,
+.standings-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.standings-table tbody tr:first-child .rank-cell {
+  color: #1976d2;
+  font-weight: 850;
+}
+
+.standings-table tbody .team-column {
+  padding-right: 8px;
+}
+
+.standing-team {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: #273648;
+  font-weight: 730;
+}
+
+.standing-team img {
+  width: 21px;
+  height: 21px;
+  flex: 0 0 21px;
+  object-fit: contain;
+}
+
+.standing-team > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.standings-table .points-column,
+.standings-table .points-cell {
+  color: #1765a8;
+  font-weight: 850;
+}
+
+.form-dots {
+  display: inline-flex;
+  justify-content: center;
+  gap: 3px;
+}
+
+.form-dot {
+  display: grid;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  border-radius: 6px;
+  font-size: 8px;
+  font-weight: 850;
+}
+
+.form-dot.w {
+  background: #e6f6ed;
+  color: #22844d;
+}
+
+.form-dot.d {
+  background: #f0f2f5;
+  color: #77818d;
+}
+
+.form-dot.l {
+  background: #fff0f0;
+  color: #c94b52;
+}
+
+.standings-empty {
+  margin: 0;
+  padding: 16px;
+  color: #778697;
+  font-size: 12px;
+}
+
 .filter-tabs {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -723,6 +946,11 @@ h1 {
   border-color: transparent;
   background: #1976d2;
   color: #fff;
+}
+
+.view-tab:focus-visible {
+  outline: 3px solid rgba(25, 118, 210, .28);
+  outline-offset: 2px;
 }
 
 .league-option:focus-visible,
