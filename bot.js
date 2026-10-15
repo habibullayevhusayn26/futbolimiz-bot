@@ -325,6 +325,7 @@ const activeAdminPanels = new Set();
 const joinRequestChatIds = new Set();
 const pendingJoinApprovals = new Set();
 const pendingBulkJoinApprovals = new Set();
+const pendingRequiredChannelAdds = new Map();
 const data = { settings: { requiredChannels: [] } };
 const premiumEmojis = {
   welcome: '<tg-emoji emoji-id="5199785165735367039">⚡️</tg-emoji>',
@@ -568,10 +569,12 @@ function welcomeMarkup(ctx) {
 }
 
 function subscriptionKeyboard(channels) {
-  const rows = channels.map((channel, index) => [Markup.button.url(
-    `📢 ${index + 1} - kanal`,
-    `https://t.me/${String(channel.username).replace(/^@/, '')}`
-  )]);
+  const rows = channels.flatMap((channel, index) => {
+    const url = channel.inviteLink || (channel.username
+      ? `https://t.me/${String(channel.username).replace(/^@/, '')}`
+      : '');
+    return url ? [Markup.button.url(`📢 ${index + 1} - kanal`, url)] : [];
+  }).map((button) => [button]);
   rows.push([Markup.button.callback('✅ Tekshirish', 'check_subscription')]);
   return Markup.inlineKeyboard(rows);
 }
@@ -607,8 +610,14 @@ async function checkFullAdmin(ctx, username) {
     throw new Error('Foydalanuvchi aniqlanmadi.');
   }
 
-  const normalizedUsername = normalizeChannel(username);
-  const chat = await ctx.telegram.getChat(normalizedUsername);
+  const channelInput = String(username || '').trim();
+  const isChatId = /^-?\d+$/.test(channelInput);
+  const chatId = isChatId ? Number(channelInput) : null;
+  if (isChatId && !Number.isSafeInteger(chatId)) {
+    throw new Error('Kanal ID noto\'g\'ri. Telegramdagi raqamli ID ni yuboring.');
+  }
+  const normalizedUsername = isChatId ? '' : normalizeChannel(channelInput);
+  const chat = await ctx.telegram.getChat(isChatId ? chatId : normalizedUsername);
   if (!chat || chat.type !== 'channel') throw new Error('Bu username kanalga tegishli emas.');
 
   const userMember = await ctx.telegram.getChatMember(chat.id, ctx.from.id);
@@ -625,11 +634,64 @@ async function checkFullAdmin(ctx, username) {
     throw new Error('Botga kanalda post yuborish huquqini bering.');
   }
 
+  let inviteLink = '';
+  if (!chat.username) {
+    if (member.status !== 'creator' && member.can_invite_users !== true) {
+      throw new Error('Maxfiy kanalga obuna havolasi yaratish uchun botga foydalanuvchilarni taklif qilish huquqini bering.');
+    }
+    const invite = await ctx.telegram.createChatInviteLink(chat.id);
+    inviteLink = invite.invite_link;
+  }
+
   return {
     id: chat.id,
-    title: chat.title || normalizedUsername,
-    username: chat.username ? `@${chat.username}` : normalizedUsername
+    title: chat.title || normalizedUsername || String(chat.id),
+    username: chat.username ? `@${chat.username}` : '',
+    ...(inviteLink ? { inviteLink } : {})
   };
+}
+
+async function handlePrivateRequiredChannelUpdate(ctx, update) {
+  const requesterId = Number(update?.from?.id);
+  const expiresAt = pendingRequiredChannelAdds.get(requesterId);
+  if (!expiresAt) return false;
+  if (expiresAt <= Date.now()) {
+    pendingRequiredChannelAdds.delete(requesterId);
+    return false;
+  }
+
+  const chat = update.chat;
+  const member = update.new_chat_member;
+  if (chat?.type !== 'channel' || !['creator', 'administrator'].includes(member?.status)) return false;
+
+  try {
+    const channel = await checkFullAdmin(
+      { telegram: ctx.telegram, from: update.from },
+      chat.id
+    );
+    if (!data.settings.requiredChannels.some((item) => item.id === channel.id)) {
+      const currentChannels = data.settings.requiredChannels;
+      data.settings.requiredChannels = [...currentChannels, channel];
+      try {
+        await saveSettings();
+      } catch (error) {
+        data.settings.requiredChannels = currentChannels;
+        throw error;
+      }
+    }
+    pendingRequiredChannelAdds.delete(requesterId);
+    await ctx.telegram.sendMessage(
+      requesterId,
+      `✅ “${channel.title}” majburiy obuna kanaliga qo'shildi.`
+    );
+  } catch (error) {
+    console.error(`Private required channel setup failed for ${chat.id}:`, error.response?.description || error.message);
+    await ctx.telegram.sendMessage(
+      requesterId,
+      `Kanalni qo'shib bo'lmadi: ${error.message || 'xatolik yuz berdi'}. Bot kanal administratori ekanini va foydalanuvchilarni taklif qilish huquqi borligini tekshiring.`
+    );
+  }
+  return true;
 }
 
 async function saveSettings() {
@@ -982,6 +1044,7 @@ bot.on('channel_post', handleChannelLinkCommand);
 bot.on('my_chat_member', async (ctx) => {
   const update = ctx.myChatMember;
   const chatId = update?.chat.id;
+  if (await handlePrivateRequiredChannelUpdate(ctx, update)) return;
   if (!chatId || !joinRequestChatIds.has(String(chatId))) return;
 
   const member = update.new_chat_member;
@@ -2029,14 +2092,52 @@ bot.action('admin:subscription', async (ctx) => {
   await ctx.answerCbQuery();
   if (!isAdmin(ctx)) return ctx.reply('Ruxsat yo\'q.');
   ctx.session = { step: 'required_subscription_channel', adminPanelActive: true };
-  return ctx.reply('Majburiy obuna kanalining public username sini yuboring, masalan: @my_channel');
+  return ctx.reply(
+    'Ochiq kanal uchun username yuboring (masalan, @my_channel). Maxfiy kanalni ID kiritmasdan ulash uchun quyidagi tugmani bosing:',
+    Markup.inlineKeyboard([
+      [Markup.button.callback('🔒 Maxfiy kanalni ID siz ulash', 'admin:subscription_private')],
+      [Markup.button.callback('❌ Bekor qilish', 'admin:subscription_private_cancel')]
+    ])
+  );
 });
 
 bot.action('welcome:required_add', async (ctx) => {
   await ctx.answerCbQuery();
   if (!isOwner(ctx)) return ctx.reply('Faqat asosiy admin bu amalni bajarishi mumkin.');
   ctx.session = { step: 'required_subscription_channel', adminPanelActive: true };
-  return ctx.reply('Majburiy obuna kanalining public username sini yuboring, masalan: @my_channel');
+  return ctx.reply(
+    'Ochiq kanal uchun username yuboring (masalan, @my_channel). Maxfiy kanalni ID kiritmasdan ulash uchun quyidagi tugmani bosing:',
+    Markup.inlineKeyboard([
+      [Markup.button.callback('🔒 Maxfiy kanalni ID siz ulash', 'admin:subscription_private')],
+      [Markup.button.callback('❌ Bekor qilish', 'admin:subscription_private_cancel')]
+    ])
+  );
+});
+
+bot.action('admin:subscription_private', async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) return ctx.reply('Ruxsat yo\'q.');
+  if (ctx.chat?.type !== 'private') {
+    return ctx.reply('Maxfiy kanalni ulashni botning shaxsiy chatida boshlang.');
+  }
+  pendingRequiredChannelAdds.set(Number(ctx.from.id), Date.now() + 10 * 60 * 1000);
+  ctx.session = { adminPanelActive: true };
+  return ctx.reply(
+    '10 daqiqa ichida maxfiy kanalingizga botni administrator qilib qo\'shing. ' +
+    'Botga kanalga xabar yuborish va foydalanuvchilarni taklif qilish huquqlarini bering. ' +
+    'Bot qo\'shilgan kanalni o\'zi aniqlab, majburiy obunaga ulaydi.',
+    Markup.inlineKeyboard([[
+      Markup.button.callback('❌ Bekor qilish', 'admin:subscription_private_cancel')
+    ]])
+  );
+});
+
+bot.action('admin:subscription_private_cancel', async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isAdmin(ctx)) return ctx.reply('Ruxsat yo\'q.');
+  pendingRequiredChannelAdds.delete(Number(ctx.from.id));
+  ctx.session = { adminPanelActive: true };
+  return ctx.reply('Maxfiy kanalni ulash bekor qilindi.', adminKeyboard(ctx));
 });
 
 bot.action('welcome:join_chat_connect', async (ctx) => {
@@ -2057,7 +2158,7 @@ bot.action('admin:required_list', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply('Ruxsat yo\'q.');
   const channels = await getRequiredChannels();
   if (!channels.length) return ctx.reply('Majburiy obuna kanallari yo\'q.', adminKeyboard(ctx));
-  return ctx.reply(channels.map((channel, index) => `${index + 1} - kanal: ${channel.title || channel.username}`).join('\n'), adminKeyboard(ctx));
+  return ctx.reply(channels.map((channel, index) => `${index + 1} - kanal: ${channel.title || channel.username || channel.id}`).join('\n'), adminKeyboard(ctx));
 });
 
 bot.action('admin:subscription_off', async (ctx) => {
@@ -2256,7 +2357,7 @@ bot.on('text', async (ctx) => {
   }
   if (step === 'required_subscription_channel') {
     try {
-      const channel = await checkFullAdmin(ctx, normalizeChannel(value));
+      const channel = await checkFullAdmin(ctx, value);
       if (!data.settings.requiredChannels.some((item) => item.id === channel.id)) data.settings.requiredChannels.push(channel);
       await saveSettings();
       reset(ctx);
@@ -2316,7 +2417,7 @@ if (require.main === module) {
   });
 }
 
-module.exports = { editCallbackMessage, verifyMiniAppInitData };
+module.exports = { checkFullAdmin, editCallbackMessage, verifyMiniAppInitData };
 
 process.once('SIGINT', async () => { bot.stop('SIGINT'); await mongoose.disconnect(); });
 process.once('SIGTERM', async () => { bot.stop('SIGTERM'); await mongoose.disconnect(); });
