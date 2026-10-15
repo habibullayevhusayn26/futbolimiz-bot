@@ -52,6 +52,10 @@
   let currentLiveStream = null;
   let viewerHeartbeatTimer = null;
   let livePlayerControls = null;
+  let screenWakeLock = null;
+  let screenWakeLockRequest = null;
+  let screenWakeLockUnsupportedWarned = false;
+  let fullscreenControlsTimer = null;
   let youtubePlayerState = -1;
   let liveViewerId = '';
   let fullscreenChangeHandler = null;
@@ -366,6 +370,9 @@
     liveStreamRequestId += 1;
     window.clearInterval(viewerHeartbeatTimer);
     viewerHeartbeatTimer = null;
+    window.clearTimeout(fullscreenControlsTimer);
+    fullscreenControlsTimer = null;
+    void releaseLiveScreenWakeLock();
     livePlayerControls = null;
     const telegramWebApp = window.Telegram?.WebApp;
     if (telegramWebApp?.isFullscreen &&
@@ -462,6 +469,48 @@
     viewerHeartbeatTimer = window.setInterval(() => {
       void updateLiveViewerHeartbeat(streamId);
     }, 15_000);
+  }
+
+  async function requestLiveScreenWakeLock() {
+    if (document.visibilityState !== 'visible' || selectedView !== 'stream' ||
+        !livePlayerControls || screenWakeLock) return;
+    if (!('wakeLock' in navigator)) {
+      if (!screenWakeLockUnsupportedWarned) {
+        console.warn('This browser does not support keeping the screen awake during a live stream.');
+        screenWakeLockUnsupportedWarned = true;
+      }
+      return;
+    }
+    if (screenWakeLockRequest) return screenWakeLockRequest;
+    screenWakeLockRequest = navigator.wakeLock.request('screen')
+      .then(async (wakeLock) => {
+        if (document.visibilityState !== 'visible' || selectedView !== 'stream' || !livePlayerControls) {
+          await wakeLock.release();
+          return;
+        }
+        screenWakeLock = wakeLock;
+        wakeLock.addEventListener('release', () => {
+          if (screenWakeLock === wakeLock) screenWakeLock = null;
+        }, { once: true });
+      })
+      .catch((error) => {
+        console.warn('Live stream screen wake lock could not be acquired:', error);
+      })
+      .finally(() => {
+        screenWakeLockRequest = null;
+      });
+    return screenWakeLockRequest;
+  }
+
+  async function releaseLiveScreenWakeLock() {
+    const wakeLock = screenWakeLock;
+    screenWakeLock = null;
+    if (!wakeLock || wakeLock.released) return;
+    try {
+      await wakeLock.release();
+    } catch (error) {
+      console.warn('Live stream screen wake lock could not be released:', error);
+    }
   }
 
   function renderLiveStream(stream, viewers = 0) {
@@ -595,6 +644,9 @@
 
     const controls = document.createElement('div');
     controls.className = 'stream-controls';
+    const fullscreenTouchLayer = document.createElement('div');
+    fullscreenTouchLayer.className = 'stream-fullscreen-touch-layer';
+    fullscreenTouchLayer.setAttribute('aria-hidden', 'true');
     const playButton = document.createElement('button');
     playButton.className = 'stream-control-button stream-play-button';
     playButton.type = 'button';
@@ -618,7 +670,7 @@
     fullscreenButton.innerHTML = iconMarkup('maximize');
     if (stream.type === 'youtube') volume.hidden = true;
     controls.append(playButton, soundButton, volume, fullscreenButton);
-    player.append(stage, controls);
+    player.append(stage, controls, fullscreenTouchLayer);
     livePlayerControls = { playButton, soundButton, volume, fullscreenButton, video, frame, player };
 
     const updatePlayButton = (playing) => {
@@ -678,7 +730,29 @@
       document.body.classList.toggle('stream-fullscreen-open', fullscreen);
       fullscreenButton.innerHTML = iconMarkup(fullscreen ? 'minimize' : 'maximize');
       fullscreenButton.setAttribute('aria-label', fullscreen ? 'Katta ekran rejimidan chiqish' : 'Katta ekranda ko‘rish');
+      window.clearTimeout(fullscreenControlsTimer);
+      fullscreenControlsTimer = null;
+      if (fullscreen) {
+        player.classList.remove('stream-controls-hidden');
+        fullscreenControlsTimer = window.setTimeout(() => {
+          player.classList.add('stream-controls-hidden');
+        }, 5_000);
+      } else {
+        player.classList.remove('stream-controls-hidden');
+      }
     };
+    const showFullscreenControls = () => {
+      if (!player.classList.contains('is-fullscreen')) return;
+      player.classList.remove('stream-controls-hidden');
+      window.clearTimeout(fullscreenControlsTimer);
+      fullscreenControlsTimer = window.setTimeout(() => {
+        player.classList.add('stream-controls-hidden');
+      }, 5_000);
+    };
+    player.addEventListener('pointermove', showFullscreenControls);
+    player.addEventListener('pointerdown', showFullscreenControls);
+    player.addEventListener('keydown', showFullscreenControls);
+    fullscreenTouchLayer.addEventListener('pointerdown', showFullscreenControls);
     fullscreenButton.addEventListener('click', async () => {
       const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
       const telegramWebApp = window.Telegram?.WebApp;
@@ -747,6 +821,7 @@
       liveStreamView.append(matchInfo);
     }
     startLiveViewerHeartbeat(stream.id);
+    void requestLiveScreenWakeLock();
   }
 
   async function loadLiveStream({ play = true } = {}) {
@@ -813,6 +888,7 @@
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && selectedView === 'stream' && currentLiveStream) {
+      void requestLiveScreenWakeLock();
       void updateLiveViewerHeartbeat(currentLiveStream.id);
     }
   });

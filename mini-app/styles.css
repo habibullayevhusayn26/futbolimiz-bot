@@ -345,6 +345,18 @@ h1 {
   color: #fff;
 }
 
+.stream-fullscreen-touch-layer {
+  display: none;
+}
+
+.stream-player.is-fullscreen.stream-controls-hidden .stream-fullscreen-touch-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: block;
+  background: transparent;
+}
+
 .stream-control-button {
   display: inline-flex;
   width: 38px;
@@ -413,6 +425,16 @@ h1 {
 .stream-player:fullscreen .stream-controls,
 .stream-player.is-fullscreen .stream-controls {
   padding: 10px max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+}
+
+.stream-player.is-fullscreen .stream-controls {
+  transition: opacity .2s ease, visibility .2s ease;
+}
+
+.stream-player.is-fullscreen.stream-controls-hidden .stream-controls {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .stream-player:fullscreen .stream-player-status,
