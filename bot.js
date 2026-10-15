@@ -161,6 +161,13 @@ app.use('/api/mini-app', (req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   return next();
 });
+
+let soccerLiveStream = null;
+
+app.get('/api/mini-app/live-stream', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  return res.status(200).json({ stream: soccerLiveStream });
+});
 app.use('/mini-app', express.static(path.join(__dirname, 'mini-app')));
 app.get('/mini-app', (req, res) => res.sendFile(path.join(__dirname, 'mini-app', 'index.html')));
 app.get('/', (req, res) => res.send('Movie bot ishlamoqda...'));
@@ -190,6 +197,46 @@ const soccerMatchNotificationPollMs = 30_000;
 const scoreboardDatePattern = /^\d{8}$/;
 let soccerMatchNotificationTimer;
 let soccerMatchNotificationPollRunning = false;
+
+function normalizeSoccerLiveStream(value) {
+  const input = String(value || '').trim();
+  if (!input || input.length > 2048) return null;
+
+  let url;
+  try {
+    url = new URL(input);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || url.username || url.password) return null;
+
+  const youtubeHosts = new Set([
+    'youtube.com',
+    'www.youtube.com',
+    'm.youtube.com',
+    'youtu.be',
+    'youtube-nocookie.com',
+    'www.youtube-nocookie.com'
+  ]);
+  const hostname = url.hostname.toLowerCase();
+  if (youtubeHosts.has(hostname)) {
+    const videoId = hostname === 'youtu.be'
+      ? url.pathname.split('/').filter(Boolean)[0]
+      : url.searchParams.get('v') ||
+        url.pathname.match(/^\/(?:live|embed|shorts)\/([A-Za-z0-9_-]{11})(?:\/|$)/)?.[1];
+    if (!/^[A-Za-z0-9_-]{11}$/.test(videoId || '')) return null;
+    return {
+      type: 'youtube',
+      url: url.href,
+      embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}`
+    };
+  }
+
+  if (/\.m3u8$/i.test(url.pathname)) {
+    return { type: 'hls', url: url.href };
+  }
+  return null;
+}
 
 function isValidScoreboardDate(date) {
   if (!scoreboardDatePattern.test(date)) return false;
@@ -1088,7 +1135,7 @@ function permissionsLabel(permissions) {
   const labels = {
     broadcast: 'Xabar yuborish',
     stats: 'Statistika',
-    settings: 'Obuna sozlamalari',
+    settings: 'Obuna va efir sozlamalari',
     join_requests: 'Qo\'shilish so\'rovlari',
     admins: 'Adminlar'
   };
@@ -1213,6 +1260,7 @@ function adminKeyboard(ctx) {
       { ...Markup.button.callback('📋 Obuna kanallari', 'admin:required_list'), style: 'primary' },
       { ...Markup.button.callback('❌ Obunani o\'chirish', 'admin:subscription_off'), style: 'danger' }
     ]);
+    rows.push([{ ...Markup.button.callback('📺 Jonli efirni sozlash', 'admin:stream'), style: 'primary' }]);
   }
   if (isOwner(ctx || {})) rows.push([{ ...Markup.button.callback('👥 Adminlarni boshqarish', 'admin:admins'), style: 'primary' }]);
   if (isOwner(ctx || {})) rows.push([{ ...Markup.button.callback('🧾 Admin loglari', 'admin:logs'), style: 'primary' }]);
@@ -1584,7 +1632,7 @@ async function handleSharedRequiredChat(ctx, sharedChat) {
 async function saveSettings() {
   await BotConfig.findOneAndUpdate(
     { configKey: 'main_config' },
-    { $set: { channels: data.settings.requiredChannels, settings: { messages: data.settings.messages } } },
+    { $set: { channels: data.settings.requiredChannels, 'settings.messages': data.settings.messages } },
     { upsert: true }
   );
 }
@@ -1604,6 +1652,13 @@ async function hydrateSettings() {
   }
   data.settings.requiredChannels = configDocument.channels || [];
   data.settings.messages = { ...defaultMessages };
+  const savedLiveStream = configDocument.settings?.liveStream;
+  soccerLiveStream = savedLiveStream
+    ? normalizeSoccerLiveStream(savedLiveStream.url)
+    : null;
+  if (savedLiveStream && !soccerLiveStream) {
+    console.warn('Saved Mini App live stream URL is invalid and was ignored.');
+  }
 }
 
 async function ensureUser(ctx) {
@@ -2363,7 +2418,7 @@ function permissionForCallback(callbackData) {
   if (callbackData === 'admin:admins' || callbackData === 'admin:add' || callbackData === 'admin:logs' || callbackData.startsWith('admin:manage:') || callbackData.startsWith('admin:perm:') || callbackData.startsWith('admin:remove:')) return 'admins';
   if (callbackData.startsWith('broadcast:')) return 'broadcast';
   if (callbackData === 'admin:join_chats' || callbackData.startsWith('join_chat:')) return 'join_requests';
-  if (/^admin:(?:subscription|required_list|subscription_off)/.test(callbackData)) return 'settings';
+  if (/^admin:(?:subscription|required_list|subscription_off|stream)/.test(callbackData)) return 'settings';
   return null;
 }
 
@@ -2863,6 +2918,49 @@ bot.action('admin:panel', async (ctx) => {
   return ctx.reply('Admin panel', adminKeyboard(ctx));
 });
 
+bot.action('admin:stream', async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) return ctx.reply('Ruxsat yo\'q.');
+  const current = soccerLiveStream
+    ? `Hozirgi efir: ${soccerLiveStream.type === 'youtube' ? 'YouTube' : 'HLS'}\n${soccerLiveStream.url}`
+    : 'Hozircha efir manzili sozlanmagan.';
+  return ctx.reply(
+    `${current}\n\nYouTube efir havolasi yoki HTTPS HLS (.m3u8) havolasini kiriting.`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('🔗 Efir havolasini kiritish', 'admin:stream_set')],
+      ...(soccerLiveStream
+        ? [[Markup.button.callback('⏹ Efirni o‘chirish', 'admin:stream_off')]]
+        : []),
+      [Markup.button.callback('⬅️ Admin panel', 'admin:panel')]
+    ])
+  );
+});
+
+bot.action('admin:stream_set', async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) return ctx.reply('Ruxsat yo\'q.');
+  if (ctx.chat?.type !== 'private') {
+    return ctx.reply('Efir havolasini botning shaxsiy chatida kiriting.');
+  }
+  ctx.session = { step: 'live_stream_url', adminPanelActive: true };
+  return ctx.reply(
+    'YouTube efir havolasini (masalan, https://www.youtube.com/live/...) yoki HTTPS HLS (.m3u8) havolasini yuboring. HLS manbasi CORS orqali Mini App domeniga ruxsat berishi kerak. Bekor qilish uchun /cancel bosing.'
+  );
+});
+
+bot.action('admin:stream_off', async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) return ctx.reply('Ruxsat yo\'q.');
+  await BotConfig.findOneAndUpdate(
+    { configKey: 'main_config' },
+    { $set: { 'settings.liveStream': null } },
+    { upsert: true }
+  );
+  soccerLiveStream = null;
+  await logAdminAction(ctx, 'mini_app_live_stream_disabled');
+  return ctx.reply('Jonli efir Mini App’dan o‘chirildi.', adminKeyboard(ctx));
+});
+
 bot.action('admin:exit', async (ctx) => {
   await ctx.answerCbQuery();
   if (!isAdmin(ctx)) return ctx.reply('Ruxsat yo\'q.');
@@ -3259,6 +3357,37 @@ bot.on('text', async (ctx) => {
   }
   if (value === 'Ulangan kanallar ro\'yxati') return showJoinRequestChats(ctx);
   if (value === 'Yordam') return ctx.reply(configuredMessage('help', ctx), replyOptions());
+  if (step === 'live_stream_url') {
+    if (value.toLowerCase() === '/cancel') {
+      reset(ctx);
+      return ctx.reply('Jonli efir havolasini kiritish bekor qilindi.', adminKeyboard(ctx));
+    }
+    if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) {
+      reset(ctx);
+      return ctx.reply('Ruxsat yo\'q.');
+    }
+    if (ctx.chat?.type !== 'private') {
+      return ctx.reply('Efir havolasini botning shaxsiy chatida kiriting yoki /cancel bosing.');
+    }
+    const stream = normalizeSoccerLiveStream(value);
+    if (!stream) {
+      return ctx.reply(
+        'Havola noto‘g‘ri. YouTube efir havolasini yoki HTTPS HLS (.m3u8) manzilini yuboring. Bekor qilish uchun /cancel bosing.'
+      );
+    }
+    await BotConfig.findOneAndUpdate(
+      { configKey: 'main_config' },
+      { $set: { 'settings.liveStream': stream } },
+      { upsert: true }
+    );
+    soccerLiveStream = stream;
+    await logAdminAction(ctx, 'mini_app_live_stream_updated', stream.type);
+    reset(ctx);
+    return ctx.reply(
+      `✅ Jonli efir saqlandi (${stream.type === 'youtube' ? 'YouTube' : 'HLS'}). Mini App’dagi “Jonli efir” bo‘limida ko‘rinadi.`,
+      adminKeyboard(ctx)
+    );
+  }
   if (value.startsWith('/')) {
     reset(ctx);
     return ctx.reply(isAdmin(ctx) ? 'Bu command mavjud emas.' : 'Bu command mavjud emas.');
@@ -3402,6 +3531,7 @@ module.exports = {
   isValidScoreboardDate,
   mainMenuCommands,
   normalizeSoccerEvent,
+  normalizeSoccerLiveStream,
   normalizeSoccerMatchDetails,
   normalizeSoccerStandings,
   openJoinRequestChatPicker,

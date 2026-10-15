@@ -11,6 +11,7 @@ const {
   getSoccerMatchNotificationPhase,
   isSubscribedToSoccerMatch,
   isValidScoreboardDate,
+  normalizeSoccerLiveStream,
   normalizeSoccerEvent,
   normalizeSoccerMatchDetails,
   normalizeSoccerStandings,
@@ -53,6 +54,28 @@ test('normalizes ESPN soccer event data for the Mini App', () => {
     venue: ''
   });
   assert.equal(normalizeSoccerEvent({ competitions: [] }, { id: 'eng.1', name: 'Premier League' }), null);
+});
+
+test('accepts HTTPS YouTube embeds and HLS sources for the live stream', () => {
+  assert.deepEqual(normalizeSoccerLiveStream('https://youtu.be/abcdefghijk'), {
+    type: 'youtube',
+    url: 'https://youtu.be/abcdefghijk',
+    embedUrl: 'https://www.youtube-nocookie.com/embed/abcdefghijk'
+  });
+  assert.deepEqual(normalizeSoccerLiveStream('https://www.youtube.com/live/abcdefghijk'), {
+    type: 'youtube',
+    url: 'https://www.youtube.com/live/abcdefghijk',
+    embedUrl: 'https://www.youtube-nocookie.com/embed/abcdefghijk'
+  });
+  assert.deepEqual(normalizeSoccerLiveStream('https://media.example.com/live.m3u8?token=secret'), {
+    type: 'hls',
+    url: 'https://media.example.com/live.m3u8?token=secret'
+  });
+  assert.equal(normalizeSoccerLiveStream('http://media.example.com/live.m3u8'), null);
+  assert.equal(normalizeSoccerLiveStream('https://user:password@media.example.com/live.m3u8'), null);
+  assert.equal(normalizeSoccerLiveStream('https://youtube.com.example.com/live/abcdefghijk'), null);
+  assert.equal(normalizeSoccerLiveStream('https://www.youtube.com/watch?v=short'), null);
+  assert.equal(normalizeSoccerLiveStream('https://media.example.com/live.mp4'), null);
 });
 
 test('normalizes match events, lineups, and team statistics from ESPN summary data', () => {
@@ -350,6 +373,8 @@ test('serves the embedded Mini App and its scoreboard API', async (t) => {
   assert.match(html, /id="profile-button"/);
   assert.match(html, /id="profile-view"/);
   assert.match(html, /id="notification-hint"/);
+  assert.match(html, /data-view="stream"/);
+  assert.match(html, /id="live-stream-view"/);
   assert.match(html, /rel="icon" type="image\/png" href="\/mini-app\/logo\.png"/);
 
   const logo = await fetch(`${baseUrl}/mini-app/logo.png`);
@@ -381,6 +406,10 @@ test('serves the embedded Mini App and its scoreboard API', async (t) => {
   assert.equal(invalidDetailsLeague.status, 400);
   const invalidDetailsEvent = await fetch(`${baseUrl}/api/mini-app/match-details?league=eng.1&event=not%20valid`);
   assert.equal(invalidDetailsEvent.status, 400);
+  const liveStreamResponse = await fetch(`${baseUrl}/api/mini-app/live-stream`);
+  assert.equal(liveStreamResponse.status, 200);
+  assert.equal(liveStreamResponse.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await liveStreamResponse.json(), { stream: null });
   const unauthenticatedPreferences = await fetch(`${baseUrl}/api/mini-app/notification-preferences`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

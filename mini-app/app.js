@@ -7,8 +7,11 @@
   const statusMessage = document.getElementById('status-message');
   const notificationHint = document.getElementById('notification-hint');
   const dateInput = document.getElementById('match-date');
+  const controls = document.querySelector('.controls');
   const matchControls = document.getElementById('match-controls');
   const liveBanner = document.querySelector('.live-banner');
+  const liveStreamView = document.getElementById('live-stream-view');
+  const footer = document.querySelector('.footer');
   const standingsSeason = document.getElementById('standings-season');
   const leagueSelectButton = document.getElementById('league-select-button');
   const leagueSelectLabel = document.getElementById('league-select-label');
@@ -41,6 +44,8 @@
   let currentEvents = [];
   let standingsRequestId = 0;
   let refreshTimer;
+  let activeHlsPlayer = null;
+  let liveStreamRequestId = 0;
   let favoriteTeamIds = new Set();
   let favoriteMatchIds = new Set();
   let favoriteMatchDetails = new Map();
@@ -343,6 +348,108 @@
       } else {
         console.warn('Match scoreboard refresh failed:', error);
       }
+    }
+  }
+
+  function stopLiveStream() {
+    liveStreamRequestId += 1;
+    if (activeHlsPlayer) {
+      activeHlsPlayer.destroy();
+      activeHlsPlayer = null;
+    }
+    liveStreamView.replaceChildren();
+  }
+
+  function renderLiveStream(stream) {
+    if (activeHlsPlayer) {
+      activeHlsPlayer.destroy();
+      activeHlsPlayer = null;
+    }
+    liveStreamView.replaceChildren();
+    const heading = document.createElement('h1');
+    heading.className = 'stream-heading';
+    heading.textContent = 'Jonli efir';
+    liveStreamView.append(heading);
+
+    if (!stream) {
+      const empty = document.createElement('div');
+      empty.className = 'stream-empty';
+      empty.innerHTML = `<div class="empty-icon">${iconMarkup('tv')}</div>
+        <div class="empty-title">Hozircha jonli efir yo‘q</div>
+        <div>Efir boshlanganda shu yerda tomosha qilishingiz mumkin.</div>`;
+      liveStreamView.append(empty);
+      return;
+    }
+
+    const player = document.createElement('div');
+    player.className = 'stream-player';
+    if (stream.type === 'youtube') {
+      const frame = document.createElement('iframe');
+      frame.src = stream.embedUrl;
+      frame.title = 'Futbol jonli efiri';
+      frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+      frame.referrerPolicy = 'strict-origin-when-cross-origin';
+      frame.allowFullscreen = true;
+      frame.loading = 'lazy';
+      player.append(frame);
+    } else if (stream.type === 'hls') {
+      const video = document.createElement('video');
+      video.controls = true;
+      video.playsInline = true;
+      video.preload = 'none';
+      player.append(video);
+      const status = document.createElement('p');
+      status.className = 'stream-player-status';
+      status.setAttribute('role', 'status');
+      const HlsPlayer = window.Hls;
+      if (HlsPlayer?.isSupported()) {
+        const hls = new HlsPlayer();
+        activeHlsPlayer = hls;
+        hls.loadSource(stream.url);
+        hls.attachMedia(video);
+        hls.on(HlsPlayer.Events.ERROR, (_event, data) => {
+          if (!data.fatal) return;
+          console.error('HLS live stream playback failed:', data.type, data.details);
+          status.textContent = 'Efirni ijro etib bo‘lmadi. Keyinroq qayta urinib ko‘ring.';
+          hls.destroy();
+          if (activeHlsPlayer === hls) activeHlsPlayer = null;
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = stream.url;
+      } else {
+        status.textContent = 'Bu qurilmada HLS efirini ijro etib bo‘lmaydi.';
+      }
+      liveStreamView.append(player, status);
+      return;
+    } else {
+      const error = document.createElement('p');
+      error.className = 'stream-error';
+      error.textContent = 'Efir manzili noto‘g‘ri sozlangan.';
+      liveStreamView.append(error);
+      return;
+    }
+    liveStreamView.append(player);
+  }
+
+  async function loadLiveStream() {
+    stopLiveStream();
+    const requestId = ++liveStreamRequestId;
+    const loading = document.createElement('div');
+    loading.className = 'skeleton';
+    liveStreamView.append(loading);
+    try {
+      const response = await fetch('/api/mini-app/live-stream', { cache: 'no-store' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Jonli efirni yuklab bo‘lmadi.');
+      if (requestId !== liveStreamRequestId || selectedView !== 'stream') return;
+      renderLiveStream(payload.stream);
+    } catch (error) {
+      if (requestId !== liveStreamRequestId || selectedView !== 'stream') return;
+      liveStreamView.replaceChildren();
+      const message = document.createElement('p');
+      message.className = 'stream-error';
+      message.textContent = error.message || 'Jonli efirni yuklab bo‘lmadi. Qayta urinib ko‘ring.';
+      liveStreamView.append(message);
     }
   }
 
@@ -1075,6 +1182,7 @@
 
   function openProfile() {
     if (activeDetailId) return;
+    if (selectedView === 'stream') stopLiveStream();
     profileOpen = true;
     dashboard.hidden = true;
     profileView.hidden = false;
@@ -1093,6 +1201,7 @@
     profileView.hidden = true;
     dashboard.hidden = false;
     document.body.classList.remove('profile-open');
+    if (selectedView === 'stream') loadLiveStream();
     telegram?.BackButton?.hide?.();
     if (updateHistory) {
       const url = new URL(window.location.href);
@@ -1161,11 +1270,27 @@
         item.classList.toggle('active', active);
         item.setAttribute('aria-pressed', String(active));
       });
+      const isMatches = selectedView === 'matches';
       const isStandings = selectedView === 'standings';
-      matchControls.hidden = isStandings;
-      liveBanner.hidden = isStandings;
-      if (isStandings) loadStandings();
-      else {
+      const isStream = selectedView === 'stream';
+      matchControls.hidden = !isMatches;
+      liveBanner.hidden = isStandings || isStream;
+      notificationHint.hidden = isStream;
+      statusMessage.hidden = isStream;
+      controls.hidden = isStream;
+      standingsSeason.hidden = !isStandings;
+      list.hidden = isStream;
+      liveStreamView.hidden = !isStream;
+      footer.hidden = isStream;
+      if (isStandings) {
+        stopLiveStream();
+        loadStandings();
+      } else if (isStream) {
+        standingsRequestId += 1;
+        setMessage();
+        loadLiveStream();
+      } else {
+        stopLiveStream();
         standingsRequestId += 1;
         standingsSeason.hidden = true;
         setMessage();
@@ -1202,7 +1327,11 @@
     dateInput.value = tashkentDateString(new Date());
     loadScoreboard();
   });
-  document.getElementById('refresh-button').addEventListener('click', loadScoreboard);
+  document.getElementById('refresh-button').addEventListener('click', () => {
+    if (selectedView === 'stream') loadLiveStream();
+    else if (selectedView === 'standings') loadStandings();
+    else loadScoreboard();
+  });
   profileButton.addEventListener('click', openProfile);
   profileBackButton.addEventListener('click', goBackFromProfile);
   profileThemeButton.addEventListener('click', () => {
@@ -1260,5 +1389,8 @@
   refreshTimer = window.setInterval(() => {
     if (isToday(dateInput.value)) loadScoreboard();
   }, 60_000);
-  window.addEventListener('beforeunload', () => window.clearInterval(refreshTimer));
+  window.addEventListener('beforeunload', () => {
+    window.clearInterval(refreshTimer);
+    stopLiveStream();
+  });
 })();
