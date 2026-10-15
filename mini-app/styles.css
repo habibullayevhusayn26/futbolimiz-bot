@@ -326,32 +326,6 @@ h1 {
   font-weight: 850;
 }
 
-.standings-image-button {
-  display: block;
-  width: calc(100% - 24px);
-  min-height: 42px;
-  margin: 0 12px 12px;
-  border: 1px solid rgba(106, 157, 211, .24);
-  border-radius: 13px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, .96), rgba(228, 241, 255, .88));
-  box-shadow: 0 4px 12px rgba(42, 91, 144, .08), inset 0 1px 0 #fff;
-  color: #28699f;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-  transition: transform .16s ease, box-shadow .16s ease, opacity .16s ease;
-}
-
-.standings-image-button:active {
-  transform: scale(.98);
-}
-
-.standings-image-button:disabled {
-  cursor: wait;
-  opacity: .65;
-}
-
 @media (max-width: 380px) {
   .standings-table .rank-column,
   .standings-table tbody .rank-cell {
@@ -512,10 +486,6 @@ h1 {
 
 .status-message.error {
   color: #b42332;
-}
-
-.status-message.success {
-  color: #22844d;
 }
 
 .status-message.warning {
