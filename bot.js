@@ -82,6 +82,13 @@ const joinRequestLinkCodeSchema = new mongoose.Schema({
   claimedChatId: { type: Number, default: null }
 }, { versionKey: false });
 
+const miniAppVisitSchema = new mongoose.Schema({
+  telegramId: { type: Number, required: true, index: true },
+  visitedAt: { type: Date, required: true, index: true },
+  expiresAt: { type: Date, required: true, expires: 0 }
+}, { versionKey: false });
+miniAppVisitSchema.index({ telegramId: 1, visitedAt: -1 });
+
 const botConfigSchema = new mongoose.Schema({
   configKey: { type: String, default: 'main_config', unique: true },
   channels: { type: Array, default: [] },
@@ -97,20 +104,238 @@ const AdminLog = mongoose.models.AdminLog || mongoose.model('AdminLog', adminLog
 const JoinRequestChat = mongoose.models.JoinRequestChat || mongoose.model('JoinRequestChat', joinRequestChatSchema);
 const PendingJoinRequest = mongoose.models.PendingJoinRequest || mongoose.model('PendingJoinRequest', pendingJoinRequestSchema);
 const JoinRequestLinkCode = mongoose.models.JoinRequestLinkCode || mongoose.model('JoinRequestLinkCode', joinRequestLinkCodeSchema);
+const MiniAppVisit = mongoose.models.MiniAppVisit || mongoose.model('MiniAppVisit', miniAppVisitSchema);
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
+app.use(express.json({ limit: '8kb' }));
+const miniAppOrigin = (() => {
+  try {
+    return new URL(config.webAppUrl).origin;
+  } catch {
+    return null;
+  }
+})();
+app.use('/api/mini-app', (req, res, next) => {
+  const origin = req.get('origin');
+  if (origin && origin !== miniAppOrigin) {
+    return res.status(403).json({ ok: false, error: 'Origin not allowed.' });
+  }
+  if (origin) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.set('Vary', 'Origin');
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  return next();
+});
 app.get('/', (req, res) => res.send('Movie bot ishlamoqda...'));
 app.get('/health', (req, res) => res.status(200).json({
   ok: true,
   mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
 }));
 
+function verifyMiniAppInitData(initData, botToken = config.botToken, now = Date.now()) {
+  if (typeof initData !== 'string' || !initData || initData.length > 4096) return null;
+  const params = new URLSearchParams(initData);
+  const hashes = params.getAll('hash');
+  const authDates = params.getAll('auth_date');
+  const users = params.getAll('user');
+  if (hashes.length !== 1 || authDates.length !== 1 || users.length !== 1 ||
+      !/^[a-f0-9]{64}$/i.test(hashes[0])) return null;
+
+  const authDate = Number(authDates[0]);
+  const nowSeconds = Math.floor(now / 1000);
+  if (!Number.isSafeInteger(authDate) || authDate > nowSeconds + 60 ||
+      nowSeconds - authDate > 24 * 60 * 60) return null;
+
+  const dataCheckString = [...params.entries()]
+    .filter(([key]) => key !== 'hash')
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
+  const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
+  const expectedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest();
+  const receivedHash = Buffer.from(hashes[0], 'hex');
+  if (receivedHash.length !== expectedHash.length ||
+      !crypto.timingSafeEqual(receivedHash, expectedHash)) return null;
+
+  let user;
+  try {
+    user = JSON.parse(users[0]);
+  } catch {
+    return null;
+  }
+  if (!user || typeof user !== 'object' || Array.isArray(user) ||
+      !Number.isSafeInteger(user.id) || user.id <= 0) return null;
+  return { authDate, user };
+}
+
+app.post('/api/mini-app/visit', async (req, res) => {
+  const verified = verifyMiniAppInitData(req.body?.initData);
+  if (!verified) return res.status(401).json({ ok: false, error: 'Invalid or expired Telegram initData.' });
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ ok: false, error: 'Analytics storage is unavailable.' });
+  }
+
+  const now = new Date();
+  const user = verified.user;
+  const userUpdate = {
+    $set: {
+      username: user.username || '',
+      nickname: [user.first_name, user.last_name].filter(Boolean).join(' ') || '',
+      lastActiveAt: now
+    },
+    $setOnInsert: { telegramId: user.id, joinedAt: now }
+  };
+  try {
+    try {
+      await User.updateOne({ telegramId: user.id }, userUpdate, { upsert: true });
+    } catch (error) {
+      if (error.code !== 11000) throw error;
+      await User.updateOne({ telegramId: user.id }, { $set: userUpdate.$set });
+    }
+    await MiniAppVisit.create({
+      telegramId: user.id,
+      visitedAt: now,
+      expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+    });
+    return res.status(201).json({ ok: true });
+  } catch (error) {
+    console.error('Mini App visit tracking failed:', error);
+    return res.status(500).json({ ok: false, error: 'Mini App visit could not be recorded.' });
+  }
+});
+
+async function editCallbackMessage(ctx, text, options = {}) {
+  const message = ctx.callbackQuery?.message;
+  if (!message) return ctx.editMessageText(text, options);
+
+  const editOptions = { ...options };
+  delete editOptions.protect_content;
+  if (typeof message.text === 'string') return ctx.editMessageText(text, editOptions);
+  if (typeof message.caption === 'string' ||
+      ['animation', 'audio', 'document', 'photo', 'video', 'voice'].some((type) => message[type])) {
+    return ctx.editMessageCaption(text, editOptions);
+  }
+  return ctx.editMessageText(text, editOptions);
+}
+
+const decoratedReplyMarkups = new WeakSet();
+const navigationWrappedTelegrams = new WeakSet();
+
+function inlineButtonStyle(button) {
+  if (button.callback_data === 'navigation:back' ||
+      String(button.text || '').replace(/[^\p{L}\p{N}]/gu, '').toLocaleLowerCase() === 'orqaga') return 'danger';
+  if (button.style) return button.style;
+  const label = String(button.text || '').toLocaleLowerCase();
+  const action = String(button.callback_data || '').toLocaleLowerCase();
+  const content = `${label} ${action}`;
+  if (/(bekor|cancel|delete|remove|o'chir|chiqish|exit|unlink|uzish|to'xtat|clear)/i.test(content)) return 'danger';
+  if (/(qo'sh|add|save|saqlash|send|yubor|approve|qabul|tekshir|check|davom|resume|yoqish|connect)/i.test(content)) return 'success';
+  return 'primary';
+}
+
+function colorInlineKeyboard(options) {
+  const markup = options.reply_markup;
+  if (!Array.isArray(markup?.inline_keyboard)) return options;
+  let hasBackButton = false;
+  const buttons = markup.inline_keyboard.flat().reduce((result, button) => {
+    const isBackButton = button.callback_data === 'navigation:back' ||
+      String(button.text || '').replace(/[^\p{L}\p{N}]/gu, '').toLocaleLowerCase() === 'orqaga';
+    if (isBackButton && hasBackButton) return result;
+    if (isBackButton) hasBackButton = true;
+    result.push({ ...button, style: inlineButtonStyle(button) });
+    return result;
+  }, []);
+  const rows = [];
+  let row = [];
+  let rowLength = 0;
+  const flushRow = () => {
+    if (row.length) rows.push(row);
+    row = [];
+    rowLength = 0;
+  };
+
+  for (const button of buttons) {
+    const buttonLength = Array.from(String(button.text || '')).length;
+    if (buttonLength > 17) {
+      flushRow();
+      rows.push([button]);
+      continue;
+    }
+    if (row.length && (row.length === 2 || rowLength + buttonLength > 30)) flushRow();
+    row.push(button);
+    rowLength += buttonLength;
+    if (row.length === 2) flushRow();
+  }
+  flushRow();
+
+  return {
+    ...options,
+    reply_markup: {
+      ...markup,
+      inline_keyboard: rows
+    }
+  };
+}
+
+function addNavigationControls(extra = {}) {
+  let options = { ...(extra || {}) };
+  const originalMarkup = options.reply_markup || {};
+  options = colorInlineKeyboard(options);
+  const markup = options.reply_markup || {};
+  const isMainMenu = Array.isArray(markup.inline_keyboard) &&
+    markup.inline_keyboard.some((row) => row.some((button) => button.callback_data === 'welcome:join_chat_connect')) &&
+    markup.inline_keyboard.some((row) => row.some((button) => button.callback_data === 'welcome:required_list'));
+  const isAdminMainMenu = Array.isArray(markup.inline_keyboard) &&
+    markup.inline_keyboard.some((row) => row.some((button) => button.callback_data === 'admin:exit'));
+  if (isMainMenu || isAdminMainMenu) return options;
+  if (originalMarkup && typeof originalMarkup === 'object' && decoratedReplyMarkups.has(originalMarkup)) {
+    decoratedReplyMarkups.delete(originalMarkup);
+    return options;
+  }
+  const hasBackButton = Array.isArray(markup.inline_keyboard) &&
+    markup.inline_keyboard.flat().some((button) => button.callback_data === 'navigation:back' ||
+      String(button.text || '').replace(/[^\p{L}\p{N}]/gu, '').toLocaleLowerCase() === 'orqaga');
+  if (hasBackButton) return options;
+  if (Array.isArray(markup.inline_keyboard)) {
+    options.reply_markup = {
+      ...markup,
+      inline_keyboard: [...markup.inline_keyboard, [
+        { ...Markup.button.callback('⬅️ Orqaga', 'navigation:back'), style: 'danger' }
+      ]]
+    };
+  } else {
+    options.reply_markup = Markup.inlineKeyboard([[
+      { ...Markup.button.callback('⬅️ Orqaga', 'navigation:back'), style: 'danger' }
+    ]]).reply_markup;
+  }
+  options = colorInlineKeyboard(options);
+  decoratedReplyMarkups.add(options.reply_markup);
+  return options;
+}
+
+function wrapTelegramNavigation(telegram) {
+  if (navigationWrappedTelegrams.has(telegram)) return;
+  navigationWrappedTelegrams.add(telegram);
+  for (const method of ['sendMessage', 'sendPhoto', 'sendVideo', 'sendAnimation']) {
+    const send = telegram[method].bind(telegram);
+    telegram[method] = (...args) => {
+      args[2] = addNavigationControls(args[2]);
+      return send(...args);
+    };
+  }
+}
+
 const bot = new Telegraf(config.botToken);
+wrapTelegramNavigation(bot.telegram);
 const ADMIN_USERNAME = config.admin.username;
 const ADMIN_TG_ID = config.admin.telegramId;
 const adminPermissions = ['broadcast', 'stats', 'settings', 'join_requests', 'admins'];
 const adminRegistry = new Map();
+const activeAdminPanels = new Set();
 const joinRequestChatIds = new Set();
 const pendingJoinApprovals = new Set();
 const pendingBulkJoinApprovals = new Set();
@@ -157,12 +382,21 @@ function permissionsLabel(permissions) {
 }
 
 function adminManagementKeyboard(admin) {
-  const rows = adminPermissions.map((permission) => [Markup.button.callback(
-    `${admin.permissions.includes(permission) ? '✅' : '⬜'} ${permission}`,
-    `admin:perm:${admin.telegramId}:${permission}`
-  )]);
-  rows.push([Markup.button.callback('🗑 Adminni o\'chirish', `admin:remove:${admin.telegramId}`)]);
-  rows.push([Markup.button.callback('⬅️ Adminlar ro\'yxati', 'admin:admins')]);
+  const rows = adminPermissions.map((permission) => [{
+    ...Markup.button.callback(
+      `${admin.permissions.includes(permission) ? '✅' : '⬜'} ${permission}`,
+      `admin:perm:${admin.telegramId}:${permission}`
+    ),
+    style: admin.permissions.includes(permission) ? 'success' : 'primary'
+  }]);
+  rows.push([{
+    ...Markup.button.callback('🗑 Adminni o\'chirish', `admin:remove:${admin.telegramId}`),
+    style: 'danger'
+  }]);
+  rows.push([{
+    ...Markup.button.callback('⬅️ Adminlar ro\'yxati', 'admin:admins'),
+    style: 'primary'
+  }]);
   return Markup.inlineKeyboard(rows);
 }
 
@@ -186,16 +420,24 @@ async function logAdminAction(ctx, action, details = '') {
   }
 }
 
-function reset(ctx) {
-  ctx.session = {};
+function reset(ctx, leaveAdminPanel = false) {
+  const telegramId = Number(ctx.from?.id);
+  const panelActive = !leaveAdminPanel && isAdminPanelActive(ctx);
+  if (leaveAdminPanel) activeAdminPanels.delete(telegramId);
+  ctx.session = panelActive ? { adminPanelActive: true } : {};
 }
 
 function activateAdminPanel(ctx) {
+  activeAdminPanels.add(Number(ctx.from?.id));
   ctx.session = { adminPanelActive: true };
 }
 
 function isAdminPanelActive(ctx) {
-  return isAdmin(ctx) && ctx.session?.adminPanelActive === true;
+  const telegramId = Number(ctx.from?.id);
+  return isAdmin(ctx) && (
+    activeAdminPanels.has(telegramId) ||
+    ctx.session?.adminPanelActive === true
+  );
 }
 
 function shouldProtectContent(chatId) {
@@ -224,30 +466,45 @@ function isHttpUrl(value) {
   }
 }
 
+function inlineButtonLabel(text, entities = []) {
+  const customEmojiEntities = entities.filter((entity) => entity.type === 'custom_emoji' && entity.custom_emoji_id);
+  if (customEmojiEntities.length > 1) return { error: 'Tugma uchun faqat bitta premium emoji ishlatish mumkin.' };
+
+  const customEmoji = customEmojiEntities[0];
+  const label = customEmoji
+    ? `${text.slice(0, customEmoji.offset)}${text.slice(customEmoji.offset + customEmoji.length)}`
+    : text;
+  return {
+    text: label.trim(),
+    ...(customEmoji ? { iconCustomEmojiId: customEmoji.custom_emoji_id } : {})
+  };
+}
+
 function adminKeyboard(ctx) {
   const can = (permission) => !ctx || hasPermission(ctx, permission);
   const rows = [];
   if (can('stats')) rows.push([
-    Markup.button.callback('📊 Statistika', 'admin:stats')
+    { ...Markup.button.callback('📊 Statistika', 'admin:stats'), style: 'primary' }
   ]);
   if (can('broadcast')) rows.push([
-    Markup.button.callback('📣 Xabar yuborish', 'admin:broadcast')
+    { ...Markup.button.callback('📣 Xabar yuborish', 'admin:broadcast'), style: 'primary' }
   ]);
   if (can('settings')) {
-    rows.push([Markup.button.callback('➕ Obuna kanalini qo\'shish', 'admin:subscription')]);
+    rows.push([{ ...Markup.button.callback('➕ Obuna kanalini qo\'shish', 'admin:subscription'), style: 'success' }]);
     rows.push([
-      Markup.button.callback('📋 Obuna kanallari', 'admin:required_list'),
-      Markup.button.callback('❌ Obunani o\'chirish', 'admin:subscription_off')
+      { ...Markup.button.callback('📋 Obuna kanallari', 'admin:required_list'), style: 'primary' },
+      { ...Markup.button.callback('❌ Obunani o\'chirish', 'admin:subscription_off'), style: 'danger' }
     ]);
   }
-  if (isOwner(ctx || {})) rows.push([Markup.button.callback('👥 Adminlarni boshqarish', 'admin:admins')]);
-  if (isOwner(ctx || {})) rows.push([Markup.button.callback('🧾 Admin loglari', 'admin:logs')]);
-  rows.push([Markup.button.callback('🚪 Paneldan chiqish', 'admin:exit')]);
+  if (isOwner(ctx || {})) rows.push([{ ...Markup.button.callback('👥 Adminlarni boshqarish', 'admin:admins'), style: 'primary' }]);
+  if (isOwner(ctx || {})) rows.push([{ ...Markup.button.callback('🧾 Admin loglari', 'admin:logs'), style: 'primary' }]);
+  rows.push([{ ...Markup.button.callback('🚪 Paneldan chiqish', 'admin:exit'), style: 'danger' }]);
   return Markup.inlineKeyboard(rows);
 }
 
-function userKeyboard(ctx) {
-  return isAdmin(ctx) ? Markup.keyboard([['Admin panel']]).resize() : Markup.removeKeyboard();
+function getWebAppUrl() {
+  const url = String(config.webAppUrl || '').trim();
+  return url || 'https://futbolimiz.uz';
 }
 
 const persistentSessionStore = {
@@ -288,12 +545,38 @@ function welcomeMessage(ctx) {
 }
 
 function welcomeMarkup(ctx) {
+  const webAppButton = {
+    ...Markup.button.webApp('FUTBOLIMIZ UZ mini app', getWebAppUrl()),
+    style: 'primary',
+    icon_custom_emoji_id: '4974264726604219680'
+  };
   const rows = [
-    [{ text: '➕ Kanal/guruh ulash', callback_data: 'welcome:join_chat_connect', style: 'primary' }],
-    [{ text: '📋 Ulangan kanallar ro\'yxati', callback_data: 'welcome:required_list', style: 'success' }]
+    [webAppButton],
+    [{
+      text: 'Kanal/guruh ulash',
+      callback_data: 'welcome:join_chat_connect',
+      style: 'success',
+      icon_custom_emoji_id: '5217943819311389632'
+    }],
+    [{
+      text: 'Ulangan kanallar ro\'yxati',
+      callback_data: 'welcome:required_list',
+      style: 'success',
+      icon_custom_emoji_id: '5393243708361567810'
+    }]
   ];
-  const bottomRow = [{ text: '❓ Yordam', callback_data: 'help', style: 'success' }];
-  if (isAdmin(ctx)) bottomRow.push({ text: '🛠 Admin panel', callback_data: 'admin:panel', style: 'success' });
+  const bottomRow = [{
+    text: 'Yordam',
+    callback_data: 'help',
+    style: 'danger',
+    icon_custom_emoji_id: '5452069934089641166'
+  }];
+  if (isAdmin(ctx)) bottomRow.push({
+    text: 'Admin panel',
+    callback_data: 'admin:panel',
+    style: 'danger',
+    icon_custom_emoji_id: '5231153283288038709'
+  });
   rows.push(bottomRow);
   return Markup.inlineKeyboard(rows).reply_markup;
 }
@@ -413,30 +696,60 @@ async function notifyNewSubscriber(ctx) {
 
 function broadcastKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback('➡️ Rasmsiz davom etish', 'broadcast:no_media')],
-    [Markup.button.callback('❌ Bekor qilish', 'broadcast:cancel')]
+    [{ ...Markup.button.callback('➡️ Rasmsiz davom etish', 'broadcast:no_media'), style: 'primary' }],
+    [{ ...Markup.button.callback('❌ Bekor qilish', 'broadcast:cancel'), style: 'danger' }]
   ]);
 }
 
 function broadcastButtonKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback('➕ Yana tugma qo\'shish', 'broadcast:add_button')],
-    [Markup.button.callback('👁 Preview', 'broadcast:preview')],
-    [Markup.button.callback('❌ Bekor qilish', 'broadcast:cancel')]
+    [{ ...Markup.button.callback('➕ Yana tugma qo\'shish', 'broadcast:add_button'), style: 'success' }],
+    [{ ...Markup.button.callback('👁 Preview', 'broadcast:preview'), style: 'primary' }],
+    [{ ...Markup.button.callback('❌ Bekor qilish', 'broadcast:cancel'), style: 'danger' }]
   ]);
+}
+
+function broadcastButtonTypeKeyboard() {
+  return Markup.inlineKeyboard([
+    [
+      { ...Markup.button.callback('🔗 Odatdagi link', 'broadcast:type:url'), style: 'primary' },
+      { ...Markup.button.callback('🚀 Mini App', 'broadcast:type:web_app'), style: 'success' }
+    ],
+    [{ ...Markup.button.callback('❌ Bekor qilish', 'broadcast:cancel'), style: 'danger' }]
+  ]);
+}
+
+function buildBroadcastInlineButton(text, url, kind = 'url', style, iconCustomEmojiId) {
+  const resolvedUrl = kind === 'web_app' ? (url || getWebAppUrl()) : url;
+  const button = kind === 'web_app' ? Markup.button.webApp(text, resolvedUrl) : Markup.button.url(text, resolvedUrl);
+  return {
+    ...button,
+    style,
+    ...(iconCustomEmojiId ? { icon_custom_emoji_id: iconCustomEmojiId } : {})
+  };
 }
 
 function broadcastConfirmKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback('📤 Yuborish', 'broadcast:send')],
-    [Markup.button.callback('❌ Bekor qilish', 'broadcast:cancel')]
+    [{ ...Markup.button.callback('📤 Yuborish', 'broadcast:send'), style: 'success' }],
+    [{ ...Markup.button.callback('❌ Bekor qilish', 'broadcast:cancel'), style: 'danger' }]
   ]);
 }
 
 function broadcastColorKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback('🔵 Ko\'k', 'broadcast:color:blue'), Markup.button.callback('🟢 Yashil', 'broadcast:color:green')],
-    [Markup.button.callback('🔴 Qizil', 'broadcast:color:red')]
+    [
+      { ...Markup.button.callback('🔵 Ko\'k', 'broadcast:color:blue'), style: 'primary' },
+      { ...Markup.button.callback('🟢 Yashil', 'broadcast:color:green'), style: 'success' }
+    ],
+    [{ ...Markup.button.callback('🔴 Qizil', 'broadcast:color:red'), style: 'danger' }]
+  ]);
+}
+
+function joinWelcomeButtonTypeKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback('🔗 Link', 'join_welcome:type:url'), Markup.button.callback('🚀 Mini App', 'join_welcome:type:web_app')],
+    [Markup.button.callback('❌ Bekor qilish', 'join_welcome:cancel')]
   ]);
 }
 
@@ -518,20 +831,28 @@ async function sendBroadcast(ctx) {
 
 async function adminStats(ctx) {
   const now = Date.now();
-  const [subscribers, activeUsers, broadcasts, linkedChats] = await Promise.all([
+  const dayAgo = new Date(now - 24 * 60 * 60 * 1000);
+  const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+  const [subscribers, newUsersDaily, newUsersWeekly, activeUsersDaily, activeUsersWeekly, broadcasts, linkedChats] = await Promise.all([
     User.countDocuments(),
-    User.countDocuments({ lastActiveAt: { $gte: new Date(now - 24 * 60 * 60 * 1000) } }),
+    User.countDocuments({ joinedAt: { $gte: dayAgo } }),
+    User.countDocuments({ joinedAt: { $gte: weekAgo } }),
+    User.countDocuments({ lastActiveAt: { $gte: dayAgo } }),
+    User.countDocuments({ lastActiveAt: { $gte: weekAgo } }),
     Broadcast.aggregate([{ $group: { _id: null, total: { $sum: 1 }, sent: { $sum: '$sent' }, failed: { $sum: '$failed' }, blocked: { $sum: '$blocked' } } }]),
     JoinRequestChat.countDocuments()
   ]);
   const broadcastStats = broadcasts[0] || { total: 0, sent: 0, failed: 0, blocked: 0 };
   return ctx.reply(`<tg-emoji emoji-id="5244825199278311613">📊</tg-emoji> Bot statistikasi\n\n` +
-    `<blockquote>Obunachilar: ${subscribers}\nFaol userlar (24 soat): ${activeUsers}\nJami ulangan chatlar: ${linkedChats}</blockquote>\n\n` +
+    `<blockquote>Obunachilar jami: ${subscribers}\nYangi userlar (24 soat / 7 kun): ${newUsersDaily} / ${newUsersWeekly}\n` +
+    `Faol userlar (24 soat / 7 kun): ${activeUsersDaily} / ${activeUsersWeekly}\n` +
+    `Jami ulangan chatlar: ${linkedChats}</blockquote>\n\n` +
     `<blockquote>Broadcastlar: ${broadcastStats.total}\nYetib borgan: ${broadcastStats.sent}\nBloklagan: ${broadcastStats.blocked}\nXatolik: ${broadcastStats.failed}</blockquote>`,
     replyOptions(adminKeyboard(ctx).reply_markup));
 }
 
 async function handleStart(ctx) {
+  reset(ctx, true);
   const registration = await ensureUser(ctx);
   if (registration.isNew) {
     try {
@@ -541,7 +862,7 @@ async function handleStart(ctx) {
     }
   }
   if (!(await requiredSubscription(ctx))) return;
-  return ctx.reply(welcomeMessage(ctx), replyOptions(welcomeMarkup(ctx) || userKeyboard(ctx).reply_markup));
+  return ctx.reply(welcomeMessage(ctx), replyOptions(welcomeMarkup(ctx)));
 }
 
 bot.use(async (ctx, next) => {
@@ -553,9 +874,45 @@ bot.use(async (ctx, next) => {
 bot.use(session({ store: persistentSessionStore }));
 
 bot.use(async (ctx, next) => {
+  wrapTelegramNavigation(ctx.telegram);
   const reply = ctx.reply.bind(ctx);
-  ctx.reply = (text, extra = {}) => reply(text, { ...(extra || {}), protect_content: !isAdmin(ctx) });
+  ctx.reply = async (text, extra = {}) => {
+    const options = addNavigationControls(extra);
+    options.protect_content = !isAdmin(ctx);
+    if (ctx.session) {
+      const navigation = ctx.session.navigation || { history: [], last: null };
+      if (!ctx.session.skipNavigationHistory) {
+        if (navigation.last) navigation.history = [...navigation.history, navigation.last].slice(-12);
+        const sessionSnapshot = { ...ctx.session };
+        delete sessionSnapshot.navigation;
+        delete sessionSnapshot.skipNavigationHistory;
+        navigation.last = { text, extra: options, session: sessionSnapshot };
+      } else {
+        delete ctx.session.skipNavigationHistory;
+      }
+      ctx.session.navigation = navigation;
+    }
+    if (ctx.callbackQuery) return editCallbackMessage(ctx, text, options);
+    return reply(text, options);
+  };
   return next();
+});
+
+bot.action('navigation:back', async (ctx) => {
+  await ctx.answerCbQuery();
+  const history = ctx.session?.navigation?.history || [];
+  const previous = history.pop();
+  if (!previous) {
+    reset(ctx);
+    if (isAdminPanelActive(ctx)) return ctx.reply('Admin panel', adminKeyboard(ctx));
+    return ctx.reply(welcomeMessage(ctx), replyOptions(welcomeMarkup(ctx)));
+  }
+  ctx.session = {
+    ...previous.session,
+    navigation: { history, last: previous },
+    skipNavigationHistory: true
+  };
+  return ctx.reply(previous.text, previous.extra || {});
 });
 
 bot.start(handleStart);
@@ -748,7 +1105,22 @@ bot.action('join_welcome:add_button', async (ctx) => {
     return ctx.reply('Chatni boshqarish huquqingiz yo\'q yoki chat uzilgan.');
   }
   ctx.session.step = 'join_welcome_button_text';
-  return ctx.reply('Havolali tugma matnini yuboring (1–64 belgi):');
+  return ctx.reply('Tugma nomini yuboring (1–64 belgi). Premium emoji yuborsangiz, u tugma ikonkasiga aylanadi:');
+});
+
+bot.action(/^join_welcome:type:(url|web_app)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!ctx.session?.joinWelcomeDraft || ctx.session.step !== 'join_welcome_button_type') {
+    return ctx.reply('Tugma turi tanlash bosqichi topilmadi.');
+  }
+  ctx.session.pendingJoinWelcomeButtonType = ctx.match[1];
+  if (ctx.match[1] === 'web_app') {
+    ctx.session.pendingJoinWelcomeButtonUrl = getWebAppUrl();
+    ctx.session.step = 'join_welcome_button_color';
+    return ctx.reply('Tugma rangini tanlang:', joinWelcomeColorKeyboard());
+  }
+  ctx.session.step = 'join_welcome_button_url';
+  return ctx.reply('Tugma havolasini yuboring (http:// yoki https://):');
 });
 
 bot.action('join_welcome:clear_buttons', async (ctx) => {
@@ -776,13 +1148,20 @@ bot.action(/^join_welcome:color:(blue|green|red)$/, async (ctx) => {
     return ctx.reply('Chatni boshqarish huquqingiz yo\'q yoki chat uzilgan.');
   }
   const style = { blue: 'primary', green: 'success', red: 'danger' }[ctx.match[1]];
+  const button = ctx.session.pendingJoinWelcomeButtonType === 'web_app'
+    ? Markup.button.webApp(ctx.session.pendingJoinWelcomeButtonText, ctx.session.pendingJoinWelcomeButtonUrl || getWebAppUrl())
+    : Markup.button.url(ctx.session.pendingJoinWelcomeButtonText, ctx.session.pendingJoinWelcomeButtonUrl);
   ctx.session.joinWelcomeDraft.buttons.push([{
-    text: ctx.session.pendingJoinWelcomeButtonText,
-    url: ctx.session.pendingJoinWelcomeButtonUrl,
-    style
+    ...button,
+    style,
+    ...(ctx.session.pendingJoinWelcomeButtonEmojiId
+      ? { icon_custom_emoji_id: ctx.session.pendingJoinWelcomeButtonEmojiId }
+      : {})
   }]);
   delete ctx.session.pendingJoinWelcomeButtonText;
   delete ctx.session.pendingJoinWelcomeButtonUrl;
+  delete ctx.session.pendingJoinWelcomeButtonType;
+  delete ctx.session.pendingJoinWelcomeButtonEmojiId;
   ctx.session.step = 'join_welcome_controls';
   return ctx.reply('Tugma qo\'shildi. Preview ko\'ring yoki saqlang.', joinWelcomeDraftKeyboard());
 });
@@ -1491,7 +1870,7 @@ bot.action('admin:panel', async (ctx) => {
 bot.action('admin:exit', async (ctx) => {
   await ctx.answerCbQuery();
   if (!isAdmin(ctx)) return ctx.reply('Ruxsat yo\'q.');
-  reset(ctx);
+  reset(ctx, true);
   try {
     await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
   } catch (error) {
@@ -1507,11 +1886,14 @@ bot.action('admin:admins', async (ctx) => {
   const text = admins.length
     ? admins.map((admin, index) => `${index + 1}. ${admin.nickname || admin.username || admin.telegramId} - ${permissionsLabel(admin.permissions)}`).join('\n')
     : 'Hali qo\'shimcha adminlar yo\'q.';
-  const rows = admins.map((admin) => [Markup.button.callback(
-    `⚙️ ${admin.nickname || admin.username || admin.telegramId}`, `admin:manage:${admin.telegramId}`
-  )]);
-  rows.push([Markup.button.callback('➕ Admin qo\'shish', 'admin:add')]);
-  rows.push([Markup.button.callback('⬅️ Admin panel', 'admin:panel')]);
+  const rows = admins.map((admin) => [{
+    ...Markup.button.callback(
+      `⚙️ ${admin.nickname || admin.username || admin.telegramId}`, `admin:manage:${admin.telegramId}`
+    ),
+    style: 'primary'
+  }]);
+  rows.push([{ ...Markup.button.callback('➕ Admin qo\'shish', 'admin:add'), style: 'success' }]);
+  rows.push([{ ...Markup.button.callback('⬅️ Admin panel', 'admin:panel'), style: 'primary' }]);
   return ctx.reply(`👥 Adminlar\n\n${text}`, Markup.inlineKeyboard(rows));
 });
 
@@ -1589,7 +1971,20 @@ bot.action('broadcast:add_button', async (ctx) => {
   await ctx.answerCbQuery();
   if (!isAdmin(ctx) || ctx.session?.step !== 'broadcast_buttons') return ctx.reply('Avval xabar matnini kiriting.');
   ctx.session.step = 'broadcast_button_text';
-  return ctx.reply('Inline tugma matnini yuboring:');
+  return ctx.reply('Inline tugma nomini yuboring (1–64 belgi). Premium emoji yuborsangiz, u tugma ikonkasiga aylanadi:');
+});
+
+bot.action(/^broadcast:type:(url|web_app)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isAdmin(ctx) || ctx.session?.step !== 'broadcast_button_type') return ctx.reply('Tugma turi tanlash bosqichi topilmadi.');
+  ctx.session.pendingButtonType = ctx.match[1];
+  if (ctx.match[1] === 'web_app') {
+    ctx.session.pendingButtonUrl = getWebAppUrl();
+    ctx.session.step = 'broadcast_button_color';
+    return ctx.reply('Tugma rangini tanlang:', broadcastColorKeyboard());
+  }
+  ctx.session.step = 'broadcast_button_url';
+  return ctx.reply('Tugma havolasini yuboring (https://...):');
 });
 
 bot.action('broadcast:preview', async (ctx) => {
@@ -1602,13 +1997,19 @@ bot.action(/^broadcast:color:(blue|green|red)$/, async (ctx) => {
   await ctx.answerCbQuery();
   if (!isAdmin(ctx) || ctx.session?.step !== 'broadcast_button_color') return ctx.reply('Tugma rangi tanlash bosqichi topilmadi.');
   const style = { blue: 'primary', green: 'success', red: 'danger' }[ctx.match[1]];
-  ctx.session.broadcast.buttons.push([{
-    text: ctx.session.pendingButtonText,
-    url: ctx.session.pendingButtonUrl,
-    style
-  }]);
+  const kind = ctx.session.pendingButtonType || 'url';
+  const button = buildBroadcastInlineButton(
+    ctx.session.pendingButtonText,
+    ctx.session.pendingButtonUrl,
+    kind,
+    style,
+    ctx.session.pendingButtonEmojiId
+  );
+  ctx.session.broadcast.buttons.push([button]);
   ctx.session.pendingButtonText = undefined;
   ctx.session.pendingButtonUrl = undefined;
+  ctx.session.pendingButtonType = undefined;
+  ctx.session.pendingButtonEmojiId = undefined;
   ctx.session.step = 'broadcast_buttons';
   return ctx.reply('Tugma qo\'shildi. Yana tugma qo\'shasizmi?', broadcastButtonKeyboard());
 });
@@ -1750,16 +2151,38 @@ bot.on('text', async (ctx) => {
       ctx.session.step = 'join_welcome_controls';
       return ctx.reply('Tugma qo\'shish bekor qilindi.', joinWelcomeDraftKeyboard());
     }
-    if (!value || value.length > 64 || value.startsWith('/')) {
+    const label = inlineButtonLabel(rawText, ctx.message.entities);
+    if (label.error) return ctx.reply(`${label.error} Qayta yuboring:`);
+    if (!label.text || label.text.length > 64 || label.text.startsWith('/')) {
       return ctx.reply('Tugma matni 1–64 belgi bo\'lishi kerak:');
     }
-    ctx.session.pendingJoinWelcomeButtonText = value;
+    ctx.session.pendingJoinWelcomeButtonText = label.text;
+    ctx.session.pendingJoinWelcomeButtonEmojiId = label.iconCustomEmojiId;
+    ctx.session.step = 'join_welcome_button_type';
+    return ctx.reply('Tugma turini tanlang:', joinWelcomeButtonTypeKeyboard());
+  }
+  if (step === 'join_welcome_button_type') {
+    if (value.toLowerCase() === '/cancel') {
+      delete ctx.session.pendingJoinWelcomeButtonText;
+      ctx.session.step = 'join_welcome_controls';
+      return ctx.reply('Tugma qo\'shish bekor qilindi.', joinWelcomeDraftKeyboard());
+    }
+    if (!['url', 'web_app'].includes(value)) {
+      return ctx.reply('Tugma turini quyidagi tugmalar yordamida tanlang:');
+    }
+    ctx.session.pendingJoinWelcomeButtonType = value;
+    if (value === 'web_app') {
+      ctx.session.pendingJoinWelcomeButtonUrl = getWebAppUrl();
+      ctx.session.step = 'join_welcome_button_color';
+      return ctx.reply('Tugma rangini tanlang:', joinWelcomeColorKeyboard());
+    }
     ctx.session.step = 'join_welcome_button_url';
     return ctx.reply('Tugma havolasini yuboring (http:// yoki https://):');
   }
   if (step === 'join_welcome_button_url') {
     if (value.toLowerCase() === '/cancel') {
       delete ctx.session.pendingJoinWelcomeButtonText;
+      delete ctx.session.pendingJoinWelcomeButtonType;
       ctx.session.step = 'join_welcome_controls';
       return ctx.reply('Tugma qo\'shish bekor qilindi.', joinWelcomeDraftKeyboard());
     }
@@ -1768,6 +2191,14 @@ bot.on('text', async (ctx) => {
     ctx.session.step = 'join_welcome_button_color';
     return ctx.reply('Tugma rangini tanlang:', joinWelcomeColorKeyboard());
   }
+  if (value === 'Kanal/guruh ulash') {
+    if (ctx.chat?.type !== 'private') {
+      return ctx.reply('Kanal yoki guruh ulash kodini olish uchun botning shaxsiy chatida ushbu tugmani bosing.');
+    }
+    return issueJoinRequestLinkCode(ctx);
+  }
+  if (value === 'Ulangan kanallar ro\'yxati') return showJoinRequestChats(ctx);
+  if (value === 'Yordam') return ctx.reply(configuredMessage('help', ctx), replyOptions());
   if (value.startsWith('/')) {
     reset(ctx);
     return ctx.reply(isAdmin(ctx) ? 'Bu command mavjud emas.' : 'Bu command mavjud emas.');
@@ -1784,7 +2215,25 @@ bot.on('text', async (ctx) => {
     return ctx.reply('Inline tugma qo\'shasizmi?', broadcastButtonKeyboard());
   }
   if (step === 'broadcast_button_text') {
-    ctx.session.pendingButtonText = value;
+    const label = inlineButtonLabel(rawText, ctx.message.entities);
+    if (label.error) return ctx.reply(`${label.error} Qayta yuboring:`);
+    if (!label.text || label.text.length > 64 || label.text.startsWith('/')) {
+      return ctx.reply('Tugma matni 1–64 belgi bo\'lishi kerak:');
+    }
+    ctx.session.pendingButtonText = label.text;
+    ctx.session.pendingButtonEmojiId = label.iconCustomEmojiId;
+    ctx.session.step = 'broadcast_button_type';
+    return ctx.reply('Tugma turini tanlang:', broadcastButtonTypeKeyboard());
+  }
+  if (step === 'broadcast_button_type') {
+    const isKnownType = value === 'url' || value === 'web_app';
+    if (!isKnownType) return ctx.reply('Tugma turini quyidagi tugmalar yordamida tanlang:');
+    ctx.session.pendingButtonType = value;
+    if (value === 'web_app') {
+      ctx.session.pendingButtonUrl = getWebAppUrl();
+      ctx.session.step = 'broadcast_button_color';
+      return ctx.reply('Tugma rangini tanlang:', broadcastColorKeyboard());
+    }
     ctx.session.step = 'broadcast_button_url';
     return ctx.reply('Tugma havolasini yuboring (https://...):');
   }
@@ -1870,6 +2319,8 @@ if (require.main === module) {
     process.exitCode = 1;
   });
 }
+
+module.exports = { editCallbackMessage, verifyMiniAppInitData };
 
 process.once('SIGINT', async () => { bot.stop('SIGINT'); await mongoose.disconnect(); });
 process.once('SIGTERM', async () => { bot.stop('SIGTERM'); await mongoose.disconnect(); });

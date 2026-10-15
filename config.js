@@ -14,6 +14,8 @@ const botUsername = normalizeUsername(
 );
 const adminUsername = normalizeUsername(process.env.ADMIN_USERNAME);
 const adminTelegramId = Number(process.env.ADMIN_TG_ID);
+const webAppUrl = process.env.WEB_APP_URL || process.env.MINI_APP_URL || process.env.APP_URL || 'https://futbolimiz.uz';
+const miniAppRepoUrl = process.env.MINI_APP_REPO_URL || '';
 const mongoUri = process.env.MONGODB_URI;
 if (mongoUri) {
   const parsedMongoUri = new URL(mongoUri);
@@ -51,5 +53,7 @@ module.exports = {
     telegramId: adminTelegramId
   },
   timezone: process.env.BOT_TIMEZONE || 'Asia/Tashkent',
+  webAppUrl,
+  miniAppRepoUrl,
   validateConfig
 };
