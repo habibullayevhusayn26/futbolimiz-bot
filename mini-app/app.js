@@ -847,10 +847,12 @@
     });
     profileContent.innerHTML = `
       <section class="profile-card">
-        <div class="profile-identity">
-          <div class="profile-avatar">${avatar}</div>
-          <div class="profile-name">${escapeHtml(fullName)}</div>
-          ${user.username ? `<div class="profile-username">@${escapeHtml(user.username)}</div>` : ''}
+        <div class="profile-banner">
+          <div class="profile-identity">
+            <div class="profile-avatar">${avatar}</div>
+            <div class="profile-name">${escapeHtml(fullName)}</div>
+            ${user.username ? `<div class="profile-username">@${escapeHtml(user.username)}</div>` : ''}
+          </div>
         </div>
         <div class="profile-info-row"><span>Telegram ID</span><strong>${escapeHtml(user.id)}</strong></div>
         <div class="profile-info-row"><span>Til</span><strong>O‘zbekcha</strong></div>
