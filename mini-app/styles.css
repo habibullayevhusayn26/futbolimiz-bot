@@ -52,12 +52,19 @@ button {
 }
 
 .topbar {
+  gap: 12px;
   margin-bottom: 20px;
+}
+
+.brand {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .brand-logo {
   display: block;
   width: min(100%, 640px);
+  max-width: 100%;
   height: auto;
   margin: 0 0 4px;
   object-fit: contain;
@@ -734,6 +741,7 @@ h1 {
 }
 
 .refresh-button {
+  flex: 0 0 43px;
   width: 43px;
   height: 43px;
   border-radius: 15px;
