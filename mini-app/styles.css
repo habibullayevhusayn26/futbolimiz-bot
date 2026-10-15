@@ -927,17 +927,6 @@ h1 {
   background: linear-gradient(125deg, #6f489e, #a45bd0 52%, #673b8e);
 }
 
-.profile-banner::before {
-  position: absolute;
-  z-index: 0;
-  inset: 0;
-  background-image: var(--profile-pattern);
-  background-repeat: no-repeat;
-  background-size: 100% 100%;
-  content: "";
-  pointer-events: none;
-}
-
 .profile-banner::after {
   position: absolute;
   z-index: 0;
@@ -954,17 +943,38 @@ h1 {
   z-index: 1;
   display: grid;
   justify-items: center;
-  gap: 7px;
-  padding: 22px 12px 24px;
+  gap: 5px;
+  padding: 10px 12px 20px;
+}
+
+.profile-avatar-wrap {
+  position: relative;
+  display: grid;
+  width: 148px;
+  height: 148px;
+  place-items: center;
+  margin-bottom: 1px;
+}
+
+.profile-avatar-wrap::before {
+  position: absolute;
+  inset: 0;
+  background-image: var(--profile-pattern);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  content: "";
+  pointer-events: none;
 }
 
 .profile-avatar {
+  position: relative;
+  z-index: 1;
   display: grid;
   width: 72px;
   height: 72px;
   overflow: hidden;
   place-items: center;
-  margin-bottom: 2px;
+  margin: 0;
   border: 3px solid rgba(255, 255, 255, .72);
   border-radius: 50%;
   background: linear-gradient(145deg, #a5ec55, #69cb3d);
