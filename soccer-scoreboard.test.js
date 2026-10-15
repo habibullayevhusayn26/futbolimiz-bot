@@ -6,6 +6,7 @@ const {
   getMiniAppUrl,
   isValidScoreboardDate,
   normalizeSoccerEvent,
+  normalizeTheSportsDbEvent,
   soccerLeagues
 } = require('./bot');
 
@@ -47,16 +48,80 @@ test('normalizes ESPN soccer event data for the Mini App', () => {
   assert.equal(normalizeSoccerEvent({ competitions: [] }, { id: 'eng.1', name: 'Premier League' }), null);
 });
 
-test('loads the selected date from ESPN leagues and caches the combined scoreboard', async () => {
+test('includes only the seven requested competitions', () => {
+  assert.deepEqual(soccerLeagues.map((league) => league.name), [
+    'UEFA Chempionlar Ligasi',
+    'Angliya Premyer Ligasi',
+    'LaLiga',
+    'Ligue 1',
+    'A Seriya',
+    'Bundesliga',
+    'O‘zbekiston Superligasi'
+  ]);
+});
+
+test('normalizes Uzbekistan Super League events from TheSportsDB', () => {
+  const event = normalizeTheSportsDbEvent({
+    idEvent: 'uz-1',
+    strTimestamp: '2026-10-15T15:00:00',
+    strStatus: 'FT',
+    strHomeTeam: 'Paxtakor',
+    strHomeTeamBadge: 'https://example.com/paxtakor.png',
+    intHomeScore: 2,
+    strAwayTeam: 'Bunyodkor',
+    intAwayScore: 1,
+    strVenue: 'Paxtakor Markaziy Stadion'
+  }, { id: '4794', name: 'O‘zbekiston Superligasi' });
+
+  assert.deepEqual(event, {
+    id: 'uz-1',
+    leagueId: '4794',
+    leagueName: 'O‘zbekiston Superligasi',
+    startTime: '2026-10-15T15:00:00Z',
+    state: 'post',
+    status: 'FT',
+    clock: '',
+    home: { name: 'Paxtakor', logo: 'https://example.com/paxtakor.png', score: 2 },
+    away: { name: 'Bunyodkor', logo: '', score: 1 },
+    venue: 'Paxtakor Markaziy Stadion'
+  });
+  const scheduledEvent = normalizeTheSportsDbEvent({
+    strHomeTeam: 'Andijon',
+    strAwayTeam: 'Sogdiana',
+    dateEvent: '2026-02-27',
+    dateEventLocal: '2026-02-27',
+    strTimeLocal: '14:00:00'
+  }, { id: '4794', name: 'O‘zbekiston Superligasi' });
+  assert.equal(scheduledEvent.startTime, '2026-02-27T14:00:00+05:00');
+  assert.equal(normalizeTheSportsDbEvent({ strHomeTeam: 'Paxtakor' }, { id: '4794', name: 'O‘zbekiston Superligasi' }), null);
+});
+
+test('loads selected competitions from ESPN and TheSportsDB and caches the scoreboard', async () => {
   const date = '20261015';
   const calls = [];
   const fakeFetch = async (url) => {
     calls.push(String(url));
     const isPremierLeague = String(url).includes('/eng.1/scoreboard');
+    const isUzbekistanLeague = String(url).includes('eventsseason.php');
     return {
       ok: true,
       json: async () => ({
-        events: isPremierLeague ? [{
+        events: isUzbekistanLeague ? [{
+          idEvent: 'uz-1',
+          idLeague: '4794',
+          dateEvent: '2026-10-15',
+          strTimestamp: '2026-10-15T15:00:00',
+          strStatus: 'FT',
+          strHomeTeam: 'Paxtakor',
+          intHomeScore: 2,
+          strAwayTeam: 'Bunyodkor',
+          intAwayScore: 1
+        }, {
+          idEvent: 'other-1',
+          idLeague: '1',
+          strHomeTeam: 'Other home',
+          strAwayTeam: 'Other away'
+        }] : isPremierLeague ? [{
           id: 'pl-1',
           date: '2026-10-15T17:00:00Z',
           competitions: [{
@@ -78,11 +143,14 @@ test('loads the selected date from ESPN leagues and caches the combined scoreboa
   ]);
 
   assert.equal(first, second);
-  assert.equal(first.events.length, 1);
-  assert.equal(first.events[0].leagueName, 'Premier League');
+  assert.equal(first.events.length, 2);
+  assert.ok(first.events.some((event) => event.leagueName === 'Angliya Premyer Ligasi'));
+  assert.ok(first.events.some((event) => event.leagueName === 'O‘zbekiston Superligasi'));
+  assert.ok(first.events.every((event) => event.leagueId !== '1'));
   assert.equal(first.partial, false);
   assert.equal(calls.length, soccerLeagues.length);
-  assert.ok(calls.every((url) => url.includes(`dates=${date}`)));
+  assert.equal(calls.filter((url) => url.includes(`dates=${date}`)).length, soccerLeagues.length - 1);
+  assert.ok(calls.some((url) => url.includes('eventsseason.php') && url.includes('s=2026')));
   assert.equal(await fetchSoccerScoreboard(date, fakeFetch), first);
   assert.equal(calls.length, soccerLeagues.length);
 });

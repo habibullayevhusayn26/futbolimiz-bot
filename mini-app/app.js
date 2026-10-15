@@ -2,14 +2,20 @@
   const telegram = window.Telegram?.WebApp;
   telegram?.ready();
   telegram?.expand();
+  telegram?.setHeaderColor?.('#ffffff');
+  telegram?.setBackgroundColor?.('#ffffff');
 
   const list = document.getElementById('match-list');
   const statusMessage = document.getElementById('status-message');
   const dateInput = document.getElementById('match-date');
-  const leagueSelect = document.getElementById('league-select');
+  const leagueSelectButton = document.getElementById('league-select-button');
+  const leagueSelectLabel = document.getElementById('league-select-label');
+  const leagueOptions = document.getElementById('league-options');
   const liveCount = document.getElementById('live-count');
   const updatedAt = document.getElementById('updated-at');
   let selectedFilter = 'all';
+  let selectedLeague = 'all';
+  let currentLeagues = [];
   let currentEvents = [];
   let refreshTimer;
 
@@ -84,7 +90,7 @@
       renderEvents();
       updatedAt.textContent = `Yangilandi ${formattedTime(new Date().toISOString())}`;
       if (payload.partial) {
-        setMessage('Ayrim musobaqalar ma’lumotini ESPN’dan olib bo‘lmadi. Ko‘rsatilgan o‘yinlar mavjud ma’lumotlardan tuzildi.', 'warning');
+        setMessage('Ayrim musobaqalar ma’lumotini olib bo‘lmadi. Ko‘rsatilgan o‘yinlar mavjud ma’lumotlardan tuzildi.', 'warning');
       }
     } catch (error) {
       list.replaceChildren();
@@ -93,21 +99,44 @@
   }
 
   function updateLeagues(leagues) {
-    const selected = leagueSelect.value;
-    const available = new Set(currentEvents.map((event) => event.leagueId));
-    const options = ['<option value="all">Barcha musobaqalar</option>'];
-    for (const league of leagues) {
-      if (available.has(league.id)) {
-        const option = document.createElement('option');
-        option.value = league.id;
-        option.textContent = league.name;
-        options.push(option.outerHTML);
-      }
+    currentLeagues = leagues;
+    const choices = [{ id: 'all', name: 'Barcha musobaqalar' }, ...leagues];
+    if (!choices.some((league) => league.id === selectedLeague)) selectedLeague = 'all';
+    leagueOptions.replaceChildren(...choices.map((league) => {
+      const option = document.createElement('button');
+      option.className = 'league-option';
+      option.type = 'button';
+      option.id = `league-option-${league.id}`;
+      option.dataset.leagueId = league.id;
+      option.setAttribute('role', 'option');
+      option.setAttribute('aria-selected', String(league.id === selectedLeague));
+      option.tabIndex = -1;
+      option.innerHTML = `<span class="league-option-mark" aria-hidden="true">${league.id === selectedLeague ? '✓' : ''}</span><span>${escapeHtml(league.name)}</span>`;
+      option.addEventListener('click', () => selectLeague(league));
+      return option;
+    }));
+    leagueSelectLabel.textContent = choices.find((league) => league.id === selectedLeague).name;
+    leagueSelectButton.setAttribute('aria-activedescendant', `league-option-${selectedLeague}`);
+    leagueOptions.querySelector(`[data-league-id="${selectedLeague}"]`).classList.add('selected');
+    leagueSelectButton.setAttribute('aria-expanded', String(!leagueOptions.hidden));
+    document.getElementById('league-filter-count').textContent = `${leagues.length} LIGA`;
+  }
+
+  function setLeagueMenuOpen(open, focusSelected = false) {
+    leagueOptions.hidden = !open;
+    leagueSelectButton.setAttribute('aria-expanded', String(open));
+    if (open && focusSelected) {
+      leagueOptions.querySelector(`[data-league-id="${selectedLeague}"]`)?.focus();
     }
-    leagueSelect.innerHTML = options.join('');
-    if ([...leagueSelect.options].some((option) => option.value === selected)) {
-      leagueSelect.value = selected;
-    }
+  }
+
+  function selectLeague(league) {
+    selectedLeague = league.id;
+    leagueSelectLabel.textContent = league.name;
+    updateLeagues(currentLeagues);
+    setLeagueMenuOpen(false);
+    leagueSelectButton.focus();
+    renderEvents();
   }
 
   function teamMarkup(team, away = false) {
@@ -163,7 +192,7 @@
     liveCount.textContent = String(liveMatches.length);
     const filteredEvents = currentEvents.filter((event) => {
       const matchesFilter = selectedFilter === 'all' || event.state === selectedFilter;
-      const matchesLeague = leagueSelect.value === 'all' || event.leagueId === leagueSelect.value;
+      const matchesLeague = selectedLeague === 'all' || event.leagueId === selectedLeague;
       return matchesFilter && matchesLeague;
     });
 
@@ -200,7 +229,28 @@
 
   dateInput.value = tashkentDateString(new Date());
   dateInput.addEventListener('change', loadScoreboard);
-  leagueSelect.addEventListener('change', renderEvents);
+  leagueSelectButton.addEventListener('click', () => {
+    const open = leagueOptions.hidden;
+    setLeagueMenuOpen(open, open);
+  });
+  leagueOptions.addEventListener('keydown', (event) => {
+    const options = [...leagueOptions.querySelectorAll('[role="option"]')];
+    const currentIndex = options.indexOf(document.activeElement);
+    let nextIndex;
+    if (event.key === 'ArrowDown') nextIndex = (currentIndex + 1 + options.length) % options.length;
+    else if (event.key === 'ArrowUp') nextIndex = (currentIndex - 1 + options.length) % options.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = options.length - 1;
+    else if (event.key === 'Escape') {
+      setLeagueMenuOpen(false);
+      leagueSelectButton.focus();
+    } else return;
+    event.preventDefault();
+    options[nextIndex].focus();
+  });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.league-select-wrap')) setLeagueMenuOpen(false);
+  });
   document.getElementById('previous-day').addEventListener('click', () => stepDate(-1));
   document.getElementById('next-day').addEventListener('click', () => stepDate(1));
   document.getElementById('today-button').addEventListener('click', () => {

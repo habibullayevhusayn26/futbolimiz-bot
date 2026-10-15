@@ -140,36 +140,13 @@ app.get('/health', (req, res) => res.status(200).json({
 }));
 
 const soccerLeagues = [
-  { id: 'eng.1', name: 'Premier League' },
-  { id: 'esp.1', name: 'La Liga' },
-  { id: 'ger.1', name: 'Bundesliga' },
-  { id: 'ita.1', name: 'Serie A' },
+  { id: 'uefa.champions', name: 'UEFA Chempionlar Ligasi' },
+  { id: 'eng.1', name: 'Angliya Premyer Ligasi' },
+  { id: 'esp.1', name: 'LaLiga' },
   { id: 'fra.1', name: 'Ligue 1' },
-  { id: 'ned.1', name: 'Eredivisie' },
-  { id: 'por.1', name: 'Primeira Liga' },
-  { id: 'tur.1', name: 'Süper Lig' },
-  { id: 'sco.1', name: 'Scottish Premiership' },
-  { id: 'bel.1', name: 'Belgian Pro League' },
-  { id: 'bra.1', name: 'Brasileirão' },
-  { id: 'arg.1', name: 'Liga Profesional Argentina' },
-  { id: 'mex.1', name: 'Liga MX' },
-  { id: 'usa.1', name: 'MLS' },
-  { id: 'uefa.champions', name: 'UEFA Champions League' },
-  { id: 'uefa.europa', name: 'UEFA Europa League' },
-  { id: 'uefa.europa.conf', name: 'UEFA Conference League' },
-  { id: 'uefa.nations', name: 'UEFA Nations League' },
-  { id: 'eng.fa', name: 'FA Cup' },
-  { id: 'eng.league_cup', name: 'EFL Cup' },
-  { id: 'esp.copa_del_rey', name: 'Copa del Rey' },
-  { id: 'ger.dfb_pokal', name: 'DFB-Pokal' },
-  { id: 'ita.coppa_italia', name: 'Coppa Italia' },
-  { id: 'fra.coupe_de_france', name: 'Coupe de France' },
-  { id: 'fifa.world', name: 'FIFA World Cup' },
-  { id: 'fifa.worldq.uefa', name: 'World Cup Qualifiers - UEFA' },
-  { id: 'fifa.worldq.conmebol', name: 'World Cup Qualifiers - CONMEBOL' },
-  { id: 'fifa.worldq.concacaf', name: 'World Cup Qualifiers - CONCACAF' },
-  { id: 'fifa.worldq.afc', name: 'World Cup Qualifiers - AFC' },
-  { id: 'fifa.worldq.caf', name: 'World Cup Qualifiers - CAF' }
+  { id: 'ita.1', name: 'A Seriya' },
+  { id: 'ger.1', name: 'Bundesliga' },
+  { id: '4794', name: 'O‘zbekiston Superligasi', source: 'thesportsdb' }
 ];
 const soccerScoreboardCache = new Map();
 const soccerScoreboardRequests = new Map();
@@ -218,6 +195,39 @@ function normalizeSoccerEvent(event, league) {
   };
 }
 
+function normalizeTheSportsDbEvent(event, league) {
+  if (!event.strHomeTeam || !event.strAwayTeam) return null;
+  const status = String(event.strStatus || '').toUpperCase();
+  const state = ['FT', 'AET', 'PEN'].includes(status)
+    ? 'post'
+    : ['LIVE', '1H', 'HT', '2H', 'ET', 'P', 'BT', 'INT'].includes(status)
+      ? 'in'
+      : 'pre';
+  const timestamp = event.dateEventLocal && event.strTimeLocal
+    ? `${event.dateEventLocal}T${event.strTimeLocal}+05:00`
+    : event.strTimestamp || `${event.dateEvent}T${event.strTime || '00:00:00'}Z`;
+  return {
+    id: event.idEvent,
+    leagueId: league.id,
+    leagueName: league.name,
+    startTime: /(?:Z|[+-]\d{2}:\d{2})$/i.test(timestamp) ? timestamp : `${timestamp}Z`,
+    state,
+    status: event.strStatus || '',
+    clock: event.strProgress || '',
+    home: {
+      name: event.strHomeTeam,
+      logo: event.strHomeTeamBadge || '',
+      score: event.intHomeScore ?? ''
+    },
+    away: {
+      name: event.strAwayTeam,
+      logo: event.strAwayTeamBadge || '',
+      score: event.intAwayScore ?? ''
+    },
+    venue: event.strVenue || ''
+  };
+}
+
 async function loadSoccerScoreboard(date, fetchImpl) {
   const events = [];
   let nextLeagueIndex = 0;
@@ -227,25 +237,40 @@ async function loadSoccerScoreboard(date, fetchImpl) {
     while (nextLeagueIndex < soccerLeagues.length) {
       const league = soccerLeagues[nextLeagueIndex];
       nextLeagueIndex += 1;
-      const url = new URL(`https://site.api.espn.com/apis/site/v2/sports/soccer/${league.id}/scoreboard`);
-      url.searchParams.set('dates', date);
-      url.searchParams.set('limit', '100');
       try {
+        const url = league.source === 'thesportsdb'
+          ? new URL('https://www.thesportsdb.com/api/v1/json/3/eventsseason.php')
+          : new URL(`https://site.api.espn.com/apis/site/v2/sports/soccer/${league.id}/scoreboard`);
+        if (league.source === 'thesportsdb') {
+          url.searchParams.set('id', league.id);
+          url.searchParams.set('s', date.slice(0, 4));
+        } else {
+          url.searchParams.set('dates', date);
+          url.searchParams.set('limit', '100');
+        }
         const response = await fetchImpl(url, { signal: AbortSignal.timeout(10_000) });
-        if (!response.ok) throw new Error(`ESPN ${response.status} (${league.id})`);
+        if (!response.ok) throw new Error(`${league.source || 'ESPN'} ${response.status} (${league.id})`);
         const payload = await response.json();
         successfulLeagues += 1;
-        events.push(...(payload.events || [])
-          .map((event) => normalizeSoccerEvent(event, league))
-          .filter(Boolean));
+        if (league.source === 'thesportsdb') {
+          events.push(...(payload.events || [])
+            .filter((event) => String(event.idLeague) === league.id &&
+              event.dateEvent === `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`)
+            .map((event) => normalizeTheSportsDbEvent(event, league))
+            .filter(Boolean));
+        } else {
+          events.push(...(payload.events || [])
+            .map((event) => normalizeSoccerEvent(event, league))
+            .filter(Boolean));
+        }
       } catch (error) {
-        console.error(`ESPN scoreboard request failed for ${league.id}:`, error.message);
+        console.error(`Scoreboard request failed for ${league.name}:`, error.message);
       }
     }
   });
   await Promise.all(workers);
 
-  if (!successfulLeagues) throw new Error('ESPN ma\'lumotlarini hozir olib bo\'lmadi.');
+  if (!successfulLeagues) throw new Error('O\'yinlar ma\'lumotini hozir olib bo\'lmadi.');
   events.sort((left, right) => new Date(left.startTime) - new Date(right.startTime));
   const data = {
     date,
@@ -2744,6 +2769,7 @@ module.exports = {
   isValidScoreboardDate,
   mainMenuCommands,
   normalizeSoccerEvent,
+  normalizeTheSportsDbEvent,
   openJoinRequestChatPicker,
   registerMainMenuCommands,
   soccerLeagues,

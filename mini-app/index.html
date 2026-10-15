@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0b1220">
+  <meta name="theme-color" content="#ffffff">
   <title>Futbol jonli hisoblari</title>
   <link rel="stylesheet" href="/mini-app/styles.css">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
@@ -16,7 +16,9 @@
         <p class="eyebrow">FUTBOLIMIZ UZ</p>
         <h1>Futbol olami</h1>
       </div>
-      <button class="refresh-button" id="refresh-button" type="button" aria-label="Yangilash">⟳</button>
+      <button class="refresh-button" id="refresh-button" type="button" aria-label="Yangilash">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3L3 11m0 0V5m0 6h6m-5 2a8 8 0 0 0 14.9 3L21 13m0 0v6m0-6h-6"/></svg>
+      </button>
     </header>
 
     <section class="live-banner" aria-label="Jonli o'yinlar">
@@ -38,19 +40,35 @@
         <button class="date-step" id="next-day" type="button" aria-label="Keyingi kun">›</button>
         <button class="today-button" id="today-button" type="button">Bugun</button>
       </div>
-      <label class="league-select-wrap">
-        <span>Musobaqa</span>
-        <select id="league-select" aria-label="Musobaqani tanlang">
-          <option value="all">Barcha musobaqalar</option>
-        </select>
-      </label>
+      <div class="league-select-wrap">
+        <span class="league-filter-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 4.8 2 3.1-2 2.2.9 3.3-2.5 1.1M16.8 6l-2.7 1.2.5 2.6 3.4 1.5 2.4-1.3M9.4 20.5l.7-3.2 3-1.7 2.8 1.1.8 3.4"/></svg>
+        </span>
+        <span class="league-filter-copy">
+          <span class="league-filter-caption">MUSOBAQA FILTRI</span>
+          <button
+            class="league-filter-trigger"
+            id="league-select-button"
+            type="button"
+            aria-label="Musobaqani tanlang"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="league-options"
+          >
+            <span id="league-select-label">Barcha musobaqalar</span>
+            <svg class="league-filter-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+          </button>
+        </span>
+        <span class="league-filter-count" id="league-filter-count">7 LIGA</span>
+        <div class="league-options" id="league-options" role="listbox" aria-label="Musobaqani tanlang" hidden></div>
+      </div>
     </section>
 
     <div class="status-message" id="status-message" role="status" aria-live="polite"></div>
     <section class="match-list" id="match-list" aria-label="Futbol o'yinlari"></section>
 
     <footer class="footer">
-      <span>Ma'lumotlar ESPN'dan</span>
+      <span>Ma'lumotlar ESPN va TheSportsDB'dan</span>
       <span id="updated-at"></span>
     </footer>
   </main>
