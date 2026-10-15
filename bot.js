@@ -319,6 +319,14 @@ function addNavigationControls(extra = {}) {
 const bot = new Telegraf(config.botToken);
 const ADMIN_USERNAME = config.admin.username;
 const ADMIN_TG_ID = config.admin.telegramId;
+const mainMenuCommands = [
+  { command: 'start', description: 'Asosiy menyuni ochish' },
+  { command: 'app', description: 'Mini Appni ochish' },
+  { command: 'connect', description: 'Kanal yoki guruhni ulash' },
+  { command: 'mychats', description: 'Ulangan kanal va guruhlar' },
+  { command: 'help', description: 'Yordam' },
+  { command: 'admin', description: 'Admin panel' }
+];
 const adminPermissions = ['broadcast', 'stats', 'settings', 'join_requests', 'admins'];
 const adminRegistry = new Map();
 const activeAdminPanels = new Set();
@@ -566,6 +574,10 @@ function welcomeMarkup(ctx) {
   });
   rows.push(bottomRow);
   return Markup.inlineKeyboard(rows).reply_markup;
+}
+
+async function registerMainMenuCommands(telegram) {
+  return telegram.setMyCommands(mainMenuCommands);
 }
 
 function subscriptionKeyboard(channels) {
@@ -1123,6 +1135,15 @@ bot.use(async (ctx, next) => {
   if (await requiredSubscription(ctx)) return next();
 });
 
+bot.command('app', async (ctx) => {
+  return ctx.reply(
+    'Mini Appni ochish uchun quyidagi tugmani bosing:',
+    Markup.inlineKeyboard([[
+      Markup.button.webApp('FUTBOLIMIZ UZ mini app', getWebAppUrl())
+    ]])
+  );
+});
+
 bot.command('connect', async (ctx) => {
   const chat = ctx.chat;
   const argument = getChatCommand(ctx).replace(/^\/connect(?:@\w+)?\s*/i, '').trim();
@@ -1161,6 +1182,7 @@ bot.command('disconnect', async (ctx) => {
 });
 
 bot.command('mychats', showJoinRequestChats);
+bot.command('help', (ctx) => ctx.reply(configuredMessage('help', ctx), replyOptions()));
 
 bot.on('channel_post', handleChannelLinkCommand);
 
@@ -2537,6 +2559,7 @@ async function startBot() {
   });
 
   await hydrateSettings();
+  await registerMainMenuCommands(bot.telegram);
   await bot.launch({
     allowedUpdates: ['message', 'channel_post', 'callback_query', 'chat_join_request', 'my_chat_member']
   });
@@ -2556,7 +2579,9 @@ module.exports = {
   checkFullAdmin,
   createRequiredChatPickerKeyboard,
   editCallbackMessage,
+  mainMenuCommands,
   openJoinRequestChatPicker,
+  registerMainMenuCommands,
   verifyMiniAppInitData
 };
 

@@ -3,7 +3,9 @@ const test = require('node:test');
 const {
   checkFullAdmin,
   createRequiredChatPickerKeyboard,
-  openJoinRequestChatPicker
+  mainMenuCommands,
+  openJoinRequestChatPicker,
+  registerMainMenuCommands
 } = require('./bot');
 
 function createContext({
@@ -117,4 +119,17 @@ test('/connect opens the chat picker with join-request management rights', async
   assert.equal(keyboard[0][0].request_chat.chat_is_channel, true);
   assert.equal(keyboard[1][0].request_chat.chat_is_channel, false);
   assert.equal(keyboard[0][0].request_chat.bot_administrator_rights.can_delete_messages, true);
+});
+
+test('registers a slash command for every main menu action', async () => {
+  const calls = [];
+  await registerMainMenuCommands({
+    setMyCommands: async (commands) => calls.push(commands)
+  });
+
+  assert.deepEqual(
+    mainMenuCommands.map(({ command }) => command),
+    ['start', 'app', 'connect', 'mychats', 'help', 'admin']
+  );
+  assert.deepEqual(calls, [mainMenuCommands]);
 });
