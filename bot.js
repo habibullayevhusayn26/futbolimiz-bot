@@ -1213,6 +1213,7 @@ const ADMIN_TG_ID = config.admin.telegramId;
 const mainMenuCommands = [
   { command: 'start', description: 'Asosiy menyuni ochish' },
   { command: 'app', description: 'Mini Appni ochish' },
+  { command: 'live', description: 'Jonli efirlar ro‘yxati' },
   { command: 'connect', description: 'Kanal yoki guruhni ulash' },
   { command: 'mychats', description: 'Ulangan kanal va guruhlar' },
   { command: 'help', description: 'Yordam' },
@@ -2117,6 +2118,16 @@ bot.command('app', async (ctx) => {
     Markup.inlineKeyboard([[
       Markup.button.webApp('FUTBOLIMIZ UZ mini app', getMiniAppUrl())
     ]])
+  );
+});
+
+bot.command('live', async (ctx) => {
+  if (ctx.chat?.type !== 'private') {
+    return ctx.reply('Jonli efirlarni ko‘rish uchun botning shaxsiy chatida /live buyrug‘ini yuboring.');
+  }
+  return ctx.reply(
+    liveStreamsMessage(),
+    replyOptions(liveStreamsKeyboard())
   );
 });
 

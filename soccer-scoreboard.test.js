@@ -22,6 +22,7 @@ const {
   normalizeSoccerStandings,
   liveStreamsKeyboard,
   liveStreamsMessage,
+  mainMenuCommands,
   welcomeMarkup,
   soccerLeagues
 } = require('./bot');
@@ -547,6 +548,13 @@ test('adds active streams first in the welcome menu and links each stream direct
     'FUTBOLIMIZ UZ mini app'
   );
   assert.equal(liveStreamsMessage([]), 'Hozirda jonli efir mavjud emas.');
+});
+
+test('registers a command for opening the live stream list', () => {
+  assert.deepEqual(mainMenuCommands.find((item) => item.command === 'live'), {
+    command: 'live',
+    description: 'Jonli efirlar ro‘yxati'
+  });
 });
 
 test('creates a Mini App link targeting the requested match and Tashkent date', () => {
