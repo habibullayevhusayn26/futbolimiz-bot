@@ -223,7 +223,6 @@ async function editCallbackMessage(ctx, text, options = {}) {
 }
 
 const decoratedReplyMarkups = new WeakSet();
-const navigationWrappedTelegrams = new WeakSet();
 
 function inlineButtonStyle(button) {
   if (button.callback_data === 'navigation:back' ||
@@ -317,20 +316,7 @@ function addNavigationControls(extra = {}) {
   return options;
 }
 
-function wrapTelegramNavigation(telegram) {
-  if (navigationWrappedTelegrams.has(telegram)) return;
-  navigationWrappedTelegrams.add(telegram);
-  for (const method of ['sendMessage', 'sendPhoto', 'sendVideo', 'sendAnimation']) {
-    const send = telegram[method].bind(telegram);
-    telegram[method] = (...args) => {
-      args[2] = addNavigationControls(args[2]);
-      return send(...args);
-    };
-  }
-}
-
 const bot = new Telegraf(config.botToken);
-wrapTelegramNavigation(bot.telegram);
 const ADMIN_USERNAME = config.admin.username;
 const ADMIN_TG_ID = config.admin.telegramId;
 const adminPermissions = ['broadcast', 'stats', 'settings', 'join_requests', 'admins'];
@@ -885,7 +871,6 @@ bot.use(async (ctx, next) => {
 bot.use(session({ store: persistentSessionStore }));
 
 bot.use(async (ctx, next) => {
-  wrapTelegramNavigation(ctx.telegram);
   const reply = ctx.reply.bind(ctx);
   ctx.reply = async (text, extra = {}) => {
     const options = addNavigationControls(extra);
