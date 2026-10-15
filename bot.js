@@ -126,7 +126,7 @@ app.use('/api/mini-app', (req, res, next) => {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
     res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   return next();
@@ -422,6 +422,38 @@ app.get('/api/mini-app/standings', async (req, res) => {
     return res.status(502).json({ ok: false, error: 'Turnir jadvalini olib bo‘lmadi. Keyinroq qayta urinib ko‘ring.' });
   }
 });
+
+app.post(
+  '/api/mini-app/standings-image',
+  express.raw({ type: 'image/png', limit: '5mb' }),
+  async (req, res) => {
+    const verified = verifyMiniAppInitData(req.get('X-Telegram-Init-Data'));
+    if (!verified) return res.status(401).json({ ok: false, error: 'Telegram foydalanuvchisi tasdiqlanmadi.' });
+    if (!Buffer.isBuffer(req.body) || req.body.length < 8 ||
+        !req.body.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+      return res.status(400).json({ ok: false, error: 'Yuborilgan fayl PNG rasm emas.' });
+    }
+
+    const leagueName = String(req.query.league || '').trim();
+    const season = String(req.query.season || '').trim();
+    if (!soccerLeagues.some((league) => league.name === leagueName) ||
+        !/^[\p{L}\p{N} .–—'-]{1,64}$/u.test(season)) {
+      return res.status(400).json({ ok: false, error: 'Musobaqa yoki mavsum ma’lumoti noto‘g‘ri.' });
+    }
+
+    try {
+      await bot.telegram.sendPhoto(
+        verified.user.id,
+        { source: req.body, filename: 'turnir-jadvali.png' },
+        { caption: `${leagueName} — ${season} mavsumi turnir jadvali` }
+      );
+      return res.status(200).json({ ok: true });
+    } catch (error) {
+      console.error('Mini App standings image delivery failed:', error);
+      return res.status(502).json({ ok: false, error: 'Rasmni bot orqali yuborib bo‘lmadi. Keyinroq qayta urinib ko‘ring.' });
+    }
+  }
+);
 
 function verifyMiniAppInitData(initData, botToken = config.botToken, now = Date.now()) {
   if (typeof initData !== 'string' || !initData || initData.length > 4096) return null;

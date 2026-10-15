@@ -211,6 +211,12 @@ test('serves the embedded Mini App and its scoreboard API', async (t) => {
   assert.equal(invalidDate.status, 400);
   const invalidLeague = await fetch(`${baseUrl}/api/mini-app/standings?league=uzb.1`);
   assert.equal(invalidLeague.status, 400);
+  const unauthorizedImage = await fetch(`${baseUrl}/api/mini-app/standings-image?league=LaLiga&season=2026-27`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'image/png' },
+    body: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+  });
+  assert.equal(unauthorizedImage.status, 401);
 });
 
 test('uses the configured public origin with the embedded app path', () => {
