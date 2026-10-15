@@ -223,11 +223,44 @@ h1 {
   padding-bottom: 20px;
 }
 
+.stream-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
 .stream-heading {
+  overflow: hidden;
   font-size: 20px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+}
+
+.stream-viewer-count {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 10px;
+  border: 1px solid rgba(31, 145, 88, .18);
+  border-radius: 999px;
+  background: rgba(31, 145, 88, .09);
+  color: #147447;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.stream-viewer-count .svg-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .stream-player {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   aspect-ratio: 16 / 9;
   border: 1px solid var(--line);
@@ -236,13 +269,152 @@ h1 {
   box-shadow: 0 8px 24px rgba(24, 40, 60, .12);
 }
 
-.stream-player iframe,
-.stream-player video {
+.stream-stage {
+  position: relative;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.stream-stage iframe,
+.stream-stage video {
   display: block;
   width: 100%;
   height: 100%;
   border: 0;
   background: #080b10;
+}
+
+.stream-stage video {
+  object-fit: contain;
+}
+
+.stream-controls {
+  z-index: 1;
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  background: linear-gradient(90deg, #10261d, #18382a);
+  color: #fff;
+}
+
+.stream-control-button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid rgba(223, 255, 236, .18);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .09);
+  color: #f6fff8;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.stream-control-button:active {
+  transform: scale(.97);
+}
+
+.stream-play-button {
+  border-color: transparent;
+  background: #baf36a;
+  color: #17351e;
+}
+
+.stream-play-button .svg-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.stream-sound-button {
+  min-width: 62px;
+}
+
+.stream-volume {
+  width: clamp(46px, 17vw, 105px);
+  height: 20px;
+  accent-color: #baf36a;
+}
+
+.stream-fullscreen-button {
+  margin-left: auto;
+}
+
+.stream-fullscreen-icon {
+  position: relative;
+  width: 13px;
+  height: 13px;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+}
+
+.stream-fullscreen-icon::before,
+.stream-fullscreen-icon::after {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  background: #193628;
+  content: "";
+}
+
+.stream-fullscreen-icon::before {
+  top: -3px;
+  left: -3px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+}
+
+.stream-fullscreen-icon::after {
+  right: -3px;
+  bottom: -3px;
+  border-top: 2px solid currentColor;
+  border-left: 2px solid currentColor;
+}
+
+.stream-fullscreen-icon.exit {
+  border: 0;
+}
+
+.stream-fullscreen-icon.exit::before {
+  inset: 1px auto auto 1px;
+  width: 9px;
+  height: 9px;
+  border: 0;
+  background: transparent;
+  box-shadow: inset 2px 2px currentColor, inset -2px -2px currentColor;
+}
+
+.stream-fullscreen-icon.exit::after {
+  display: none;
+}
+
+.stream-player:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
+  aspect-ratio: auto;
+  border: 0;
+  border-radius: 0;
+  background: #060908;
+}
+
+.stream-player:fullscreen .stream-stage {
+  flex: 1 1 auto;
+}
+
+.stream-player:fullscreen .stream-controls {
+  padding: 10px max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+}
+
+.stream-player-status {
+  min-height: 0;
 }
 
 .stream-player-status,
@@ -268,8 +440,40 @@ h1 {
   font-size: 15px;
 }
 
+.stream-match-info {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
 .live-stream-view[hidden] {
   display: none;
+}
+
+.notification-hint[hidden],
+.match-list[hidden],
+.footer[hidden] {
+  display: none !important;
+}
+
+.match-stream-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #14824d;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.match-stream-tag .svg-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.match-card.broadcast-live {
+  border-color: rgba(31, 145, 88, .3);
+  box-shadow: 0 5px 17px rgba(31, 145, 88, .09);
 }
 
 .standings-season {
@@ -450,6 +654,19 @@ h1 {
 }
 
 @media (max-width: 380px) {
+  .stream-controls {
+    gap: 5px;
+    padding: 6px;
+  }
+
+  .stream-control-button {
+    padding: 0 8px;
+  }
+
+  .stream-volume {
+    display: none;
+  }
+
   .standings-table .rank-column,
   .standings-table tbody .rank-cell {
     width: 21px;
@@ -2227,6 +2444,21 @@ h1 {
 html[data-theme="dark"] body {
   background: var(--bg);
   color: var(--text);
+}
+
+html[data-theme="dark"] .stream-viewer-count {
+  border-color: rgba(113, 219, 163, .22);
+  background: rgba(31, 145, 88, .18);
+  color: #91e8b2;
+}
+
+html[data-theme="dark"] .match-card.broadcast-live {
+  border-color: rgba(113, 219, 163, .32);
+  box-shadow: 0 5px 17px rgba(31, 145, 88, .12);
+}
+
+html[data-theme="dark"] .match-stream-tag {
+  color: #91e8b2;
 }
 
 html[data-theme="dark"] .profile-button,

@@ -163,10 +163,71 @@ app.use('/api/mini-app', (req, res, next) => {
 });
 
 let soccerLiveStream = null;
+const activeSoccerStreamViewers = new Map();
+
+function pruneLiveStreamViewers(now = Date.now()) {
+  const activeSince = now - 45_000;
+  for (const [viewerId, viewer] of activeSoccerStreamViewers) {
+    if (viewer.lastSeenAt < activeSince) activeSoccerStreamViewers.delete(viewerId);
+  }
+}
+
+function getActiveLiveViewerCount(streamId, now = Date.now()) {
+  pruneLiveStreamViewers(now);
+  let count = 0;
+  for (const viewer of activeSoccerStreamViewers.values()) {
+    if (viewer.streamId === streamId) count += 1;
+  }
+  return count;
+}
+
+function recordLiveStreamViewer(viewerId, streamId, now = Date.now()) {
+  pruneLiveStreamViewers(now);
+  if (activeSoccerStreamViewers.size >= 20_000 && !activeSoccerStreamViewers.has(viewerId)) {
+    return null;
+  }
+  activeSoccerStreamViewers.set(viewerId, { streamId, lastSeenAt: now });
+  return getActiveLiveViewerCount(streamId, now);
+}
+
+function publicLiveStream(stream) {
+  if (!stream) return null;
+  return {
+    id: stream.id,
+    type: stream.type,
+    url: stream.url,
+    embedUrl: stream.embedUrl,
+    title: stream.title,
+    match: stream.match || null
+  };
+}
 
 app.get('/api/mini-app/live-stream', (req, res) => {
   res.set('Cache-Control', 'no-store');
-  return res.status(200).json({ stream: soccerLiveStream });
+  return res.status(200).json({
+    stream: publicLiveStream(soccerLiveStream),
+    viewers: soccerLiveStream ? getActiveLiveViewerCount(soccerLiveStream.id) : 0
+  });
+});
+
+app.post('/api/mini-app/live-stream/viewer', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const viewerId = String(req.body?.viewerId || '');
+  const streamId = String(req.body?.streamId || '');
+  if (!/^[A-Za-z0-9_-]{20,80}$/.test(viewerId) || !/^[A-Za-z0-9_-]{16,80}$/.test(streamId)) {
+    return res.status(400).json({ ok: false, error: 'Tomoshabin ma’lumoti noto‘g‘ri.' });
+  }
+  if (!soccerLiveStream || streamId !== soccerLiveStream.id) {
+    return res.status(200).json({
+      viewers: soccerLiveStream ? getActiveLiveViewerCount(soccerLiveStream.id) : 0,
+      streamChanged: true
+    });
+  }
+  const viewers = recordLiveStreamViewer(viewerId, streamId);
+  if (viewers === null) {
+    return res.status(429).json({ ok: false, error: 'Tomoshabinlar soni vaqtincha cheklangan.' });
+  }
+  return res.status(200).json({ viewers });
 });
 app.use('/mini-app', express.static(path.join(__dirname, 'mini-app')));
 app.get('/mini-app', (req, res) => res.sendFile(path.join(__dirname, 'mini-app', 'index.html')));
@@ -608,6 +669,24 @@ function findNextScheduledSoccerMatch(events, now = Date.now()) {
     .filter((event) => event.state === 'pre' && event.startTime &&
       Number.isFinite(Date.parse(event.startTime)) && Date.parse(event.startTime) > now)
     .sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime))[0] || null;
+}
+
+function findSoccerMatchesStartingWithin(events, now = Date.now(), windowMs = 30 * 60_000) {
+  return events
+    .filter((event) => {
+      const startTime = Date.parse(event.startTime || '');
+      return event.state === 'pre' && Number.isFinite(startTime) &&
+        startTime >= now && startTime <= now + windowMs;
+    })
+    .sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime));
+}
+
+async function findUpcomingStreamMatches(now = Date.now()) {
+  const results = await Promise.all([
+    fetchSoccerScoreboard(getTashkentScoreboardDate(new Date(now))),
+    fetchSoccerScoreboard(getTashkentScoreboardDate(new Date(now + 24 * 60 * 60 * 1000)))
+  ]);
+  return findSoccerMatchesStartingWithin(results.flatMap((result) => result.events), now);
 }
 
 function formattedMatchTime(value) {
@@ -1281,6 +1360,12 @@ function getMiniAppUrl() {
   return url.toString();
 }
 
+function getMiniAppLiveStreamUrl() {
+  const url = new URL(getMiniAppUrl());
+  url.searchParams.set('stream', 'live');
+  return url.toString();
+}
+
 const persistentSessionStore = {
   async get(key) {
     const record = await Session.findOne({ key }).lean();
@@ -1637,6 +1722,23 @@ async function saveSettings() {
   );
 }
 
+async function saveSoccerLiveStream(ctx, stream) {
+  const savedStream = { ...stream, id: crypto.randomUUID() };
+  await BotConfig.findOneAndUpdate(
+    { configKey: 'main_config' },
+    { $set: { 'settings.liveStream': savedStream } },
+    { upsert: true }
+  );
+  soccerLiveStream = savedStream;
+  activeSoccerStreamViewers.clear();
+  await logAdminAction(
+    ctx,
+    'mini_app_live_stream_updated',
+    `${savedStream.type}${savedStream.match ? `:${savedStream.match.leagueId}:${savedStream.match.id}` : ''}`
+  );
+  return savedStream;
+}
+
 async function hydrateSettings() {
   await mongoConnection;
   const admins = await Admin.find({ active: true }).lean();
@@ -1653,8 +1755,25 @@ async function hydrateSettings() {
   data.settings.requiredChannels = configDocument.channels || [];
   data.settings.messages = { ...defaultMessages };
   const savedLiveStream = configDocument.settings?.liveStream;
-  soccerLiveStream = savedLiveStream
-    ? normalizeSoccerLiveStream(savedLiveStream.url)
+  const normalizedLiveStream = savedLiveStream && normalizeSoccerLiveStream(savedLiveStream.url);
+  soccerLiveStream = normalizedLiveStream
+    ? {
+      ...normalizedLiveStream,
+      id: typeof savedLiveStream.id === 'string' && /^[A-Za-z0-9_-]{16,80}$/.test(savedLiveStream.id)
+        ? savedLiveStream.id
+        : crypto.randomUUID(),
+      title: String(savedLiveStream.title || ''),
+      match: savedLiveStream.match && typeof savedLiveStream.match === 'object'
+        ? {
+          id: String(savedLiveStream.match.id || ''),
+          leagueId: String(savedLiveStream.match.leagueId || ''),
+          leagueName: String(savedLiveStream.match.leagueName || ''),
+          startTime: String(savedLiveStream.match.startTime || ''),
+          homeName: String(savedLiveStream.match.homeName || ''),
+          awayName: String(savedLiveStream.match.awayName || '')
+        }
+        : null
+    }
     : null;
   if (savedLiveStream && !soccerLiveStream) {
     console.warn('Saved Mini App live stream URL is invalid and was ignored.');
@@ -2922,7 +3041,7 @@ bot.action('admin:stream', async (ctx) => {
   await ctx.answerCbQuery();
   if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) return ctx.reply('Ruxsat yo\'q.');
   const current = soccerLiveStream
-    ? `Hozirgi efir: ${soccerLiveStream.type === 'youtube' ? 'YouTube' : 'HLS'}\n${soccerLiveStream.url}`
+    ? `Hozirgi efir: ${soccerLiveStream.title || 'Nomsiz efir'} (${soccerLiveStream.type === 'youtube' ? 'YouTube' : 'HLS'})\n${soccerLiveStream.url}`
     : 'Hozircha efir manzili sozlanmagan.';
   return ctx.reply(
     `${current}\n\nYouTube efir havolasi yoki HTTPS HLS (.m3u8) havolasini kiriting.`,
@@ -2948,6 +3067,107 @@ bot.action('admin:stream_set', async (ctx) => {
   );
 });
 
+bot.action('admin:stream_auto_match', async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) return ctx.reply('Ruxsat yo\'q.');
+  if (ctx.chat?.type !== 'private' || ctx.session?.step !== 'live_stream_match_choice' ||
+      !ctx.session.liveStreamDraft) {
+    return ctx.reply('Efir sozlash jarayoni topilmadi. Admin paneldan qaytadan boshlang.');
+  }
+  try {
+    const events = await findUpcomingStreamMatches();
+    if (!events.length) {
+      return ctx.reply(
+        'Keyingi 30 daqiqada boshlanadigan o‘yin topilmadi. O‘zingiz efir nomini kiritishingiz mumkin:',
+        Markup.inlineKeyboard([
+          [Markup.button.callback('✍️ Efirga nom berish', 'admin:stream_custom_title')],
+          [Markup.button.callback('❌ Bekor qilish', 'admin:stream_cancel')]
+        ])
+      );
+    }
+    ctx.session.step = 'live_stream_match_selection';
+    const rows = events.map((event) => {
+      const label = `${formattedMatchTime(event.startTime)} · ${event.home.name} — ${event.away.name}`;
+      return [Markup.button.callback(
+        label.length > 64 ? `${label.slice(0, 61)}…` : label,
+        `admin:stream_match:${event.leagueId}:${event.id}`
+      )];
+    });
+    rows.push([Markup.button.callback('✍️ O‘zim nom beraman', 'admin:stream_custom_title')]);
+    rows.push([Markup.button.callback('❌ Bekor qilish', 'admin:stream_cancel')]);
+    return ctx.reply('30 daqiqa ichida boshlanadigan o‘yinni tanlang:', Markup.inlineKeyboard(rows));
+  } catch (error) {
+    console.error('Upcoming live stream matches could not be loaded:', error.message);
+    return ctx.reply('Yaqin o‘yinlarni yuklab bo‘lmadi. Birozdan keyin qayta urinib ko‘ring yoki efirga o‘zingiz nom bering.', Markup.inlineKeyboard([
+      [Markup.button.callback('✍️ Efirga nom berish', 'admin:stream_custom_title')],
+      [Markup.button.callback('❌ Bekor qilish', 'admin:stream_cancel')]
+    ]));
+  }
+});
+
+bot.action(/^admin:stream_match:([a-z0-9.]+):([A-Za-z0-9_-]{1,30})$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) return ctx.reply('Ruxsat yo\'q.');
+  const draft = ctx.session?.liveStreamDraft;
+  if (ctx.chat?.type !== 'private' || ctx.session?.step !== 'live_stream_match_selection' || !draft) {
+    return ctx.reply('Efir sozlash jarayoni topilmadi. Admin paneldan qaytadan boshlang.');
+  }
+  try {
+    const events = await findUpcomingStreamMatches();
+    const event = events.find((item) => item.leagueId === ctx.match[1] && item.id === ctx.match[2]);
+    if (!event) {
+      ctx.session.step = 'live_stream_match_choice';
+      return ctx.reply('Bu o‘yin 30 daqiqa ichidagi ro‘yxatdan chiqdi. Efirga o‘zingiz nom bering yoki boshqa o‘yin tanlang.', Markup.inlineKeyboard([
+        [Markup.button.callback('🔄 O‘yinlarni qayta yuklash', 'admin:stream_auto_match')],
+        [Markup.button.callback('✍️ Efirga nom berish', 'admin:stream_custom_title')],
+        [Markup.button.callback('❌ Bekor qilish', 'admin:stream_cancel')]
+      ]));
+    }
+    const stream = {
+      ...draft,
+      title: `${event.home.name} — ${event.away.name}`,
+      match: {
+        id: String(event.id),
+        leagueId: event.leagueId,
+        leagueName: event.leagueName,
+        startTime: event.startTime,
+        homeName: event.home.name,
+        awayName: event.away.name
+      }
+    };
+    await saveSoccerLiveStream(ctx, stream);
+    reset(ctx);
+    return ctx.reply(
+      `✅ “${stream.title}” o‘yini uchun jonli efir yoqildi.\nMini App havolasi: ${getMiniAppLiveStreamUrl()}`,
+      Markup.inlineKeyboard([[
+        Markup.button.webApp('▶️ Jonli efirni ochish', getMiniAppLiveStreamUrl())
+      ]])
+    );
+  } catch (error) {
+    console.error('Live stream match selection failed:', error.response?.description || error.message);
+    return ctx.reply('O‘yin tanlovini saqlab bo‘lmadi. Qayta urinib ko‘ring.');
+  }
+});
+
+bot.action('admin:stream_custom_title', async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) return ctx.reply('Ruxsat yo\'q.');
+  if (ctx.chat?.type !== 'private' ||
+      !['live_stream_match_choice', 'live_stream_match_selection'].includes(ctx.session?.step) ||
+      !ctx.session.liveStreamDraft) {
+    return ctx.reply('Efir sozlash jarayoni topilmadi. Admin paneldan qaytadan boshlang.');
+  }
+  ctx.session.step = 'live_stream_title';
+  return ctx.reply('Efir uchun nom yuboring (masalan, “Paxtakor — Bunyodkor”). 100 belgigacha.');
+});
+
+bot.action('admin:stream_cancel', async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) return ctx.reply('Ruxsat yo\'q.');
+  reset(ctx);
+  return ctx.reply('Jonli efir sozlash bekor qilindi.', adminKeyboard(ctx));
+});
+
 bot.action('admin:stream_off', async (ctx) => {
   await ctx.answerCbQuery();
   if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) return ctx.reply('Ruxsat yo\'q.');
@@ -2957,6 +3177,7 @@ bot.action('admin:stream_off', async (ctx) => {
     { upsert: true }
   );
   soccerLiveStream = null;
+  activeSoccerStreamViewers.clear();
   await logAdminAction(ctx, 'mini_app_live_stream_disabled');
   return ctx.reply('Jonli efir Mini App’dan o‘chirildi.', adminKeyboard(ctx));
 });
@@ -3357,6 +3578,36 @@ bot.on('text', async (ctx) => {
   }
   if (value === 'Ulangan kanallar ro\'yxati') return showJoinRequestChats(ctx);
   if (value === 'Yordam') return ctx.reply(configuredMessage('help', ctx), replyOptions());
+  if (step === 'live_stream_title') {
+    if (value.toLowerCase() === '/cancel') {
+      reset(ctx);
+      return ctx.reply('Jonli efir sozlash bekor qilindi.', adminKeyboard(ctx));
+    }
+    if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) {
+      reset(ctx);
+      return ctx.reply('Ruxsat yo\'q.');
+    }
+    if (ctx.chat?.type !== 'private') {
+      return ctx.reply('Efir nomini botning shaxsiy chatida kiriting yoki /cancel bosing.');
+    }
+    const title = value.trim();
+    if (!title || title.length > 100 || title.startsWith('/')) {
+      return ctx.reply('Efir nomi 1–100 belgi bo‘lishi kerak. Qayta yuboring yoki /cancel bosing.');
+    }
+    const draft = ctx.session.liveStreamDraft;
+    if (!draft) {
+      reset(ctx);
+      return ctx.reply('Efir sozlash muddati tugagan. Admin paneldan qaytadan boshlang.');
+    }
+    const savedStream = await saveSoccerLiveStream(ctx, { ...draft, title, match: null });
+    reset(ctx);
+    return ctx.reply(
+      `✅ “${savedStream.title}” nomli jonli efir yoqildi.\nMini App havolasi: ${getMiniAppLiveStreamUrl()}`,
+      Markup.inlineKeyboard([[
+        Markup.button.webApp('▶️ Jonli efirni ochish', getMiniAppLiveStreamUrl())
+      ]])
+    );
+  }
   if (step === 'live_stream_url') {
     if (value.toLowerCase() === '/cancel') {
       reset(ctx);
@@ -3375,17 +3626,15 @@ bot.on('text', async (ctx) => {
         'Havola noto‘g‘ri. YouTube efir havolasini yoki HTTPS HLS (.m3u8) manzilini yuboring. Bekor qilish uchun /cancel bosing.'
       );
     }
-    await BotConfig.findOneAndUpdate(
-      { configKey: 'main_config' },
-      { $set: { 'settings.liveStream': stream } },
-      { upsert: true }
-    );
-    soccerLiveStream = stream;
-    await logAdminAction(ctx, 'mini_app_live_stream_updated', stream.type);
-    reset(ctx);
+    ctx.session.liveStreamDraft = stream;
+    ctx.session.step = 'live_stream_match_choice';
     return ctx.reply(
-      `✅ Jonli efir saqlandi (${stream.type === 'youtube' ? 'YouTube' : 'HLS'}). Mini App’dagi “Jonli efir” bo‘limida ko‘rinadi.`,
-      adminKeyboard(ctx)
+      'Efir qaysi o‘yin yoki nom bilan ko‘rsatilsin?',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('⚽ Yaqin 30 daqiqadagi o‘yinni tanlash', 'admin:stream_auto_match')],
+        [Markup.button.callback('✍️ O‘zim nom beraman', 'admin:stream_custom_title')],
+        [Markup.button.callback('❌ Bekor qilish', 'admin:stream_cancel')]
+      ])
     );
   }
   if (value.startsWith('/')) {
@@ -3522,9 +3771,13 @@ module.exports = {
   fetchSoccerScoreboard,
   fetchSoccerMatchDetails,
   fetchSoccerStandings,
+  findSoccerMatchesStartingWithin,
+  getActiveLiveViewerCount,
+  getMiniAppLiveStreamUrl,
   getMiniAppUrl,
   getMatchMiniAppUrl,
   findNextScheduledSoccerMatch,
+  recordLiveStreamViewer,
   getSoccerMatchNotificationPhase,
   isSubscribedToSoccerMatch,
   editCallbackMessage,

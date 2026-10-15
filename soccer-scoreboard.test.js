@@ -5,12 +5,16 @@ const {
   fetchSoccerMatchDetails,
   fetchSoccerScoreboard,
   fetchSoccerStandings,
+  findSoccerMatchesStartingWithin,
+  getActiveLiveViewerCount,
+  getMiniAppLiveStreamUrl,
   getMatchMiniAppUrl,
   getMiniAppUrl,
   findNextScheduledSoccerMatch,
   getSoccerMatchNotificationPhase,
   isSubscribedToSoccerMatch,
   isValidScoreboardDate,
+  recordLiveStreamViewer,
   normalizeSoccerLiveStream,
   normalizeSoccerEvent,
   normalizeSoccerMatchDetails,
@@ -76,6 +80,29 @@ test('accepts HTTPS YouTube embeds and HLS sources for the live stream', () => {
   assert.equal(normalizeSoccerLiveStream('https://youtube.com.example.com/live/abcdefghijk'), null);
   assert.equal(normalizeSoccerLiveStream('https://www.youtube.com/watch?v=short'), null);
   assert.equal(normalizeSoccerLiveStream('https://media.example.com/live.mp4'), null);
+});
+
+test('selects only scheduled matches within the next 30 minutes in kickoff order', () => {
+  const now = Date.parse('2026-10-15T12:00:00Z');
+  const events = [
+    { id: 'later', state: 'pre', startTime: '2026-10-15T12:25:00Z' },
+    { id: 'in-progress', state: 'in', startTime: '2026-10-15T12:05:00Z' },
+    { id: 'too-late', state: 'pre', startTime: '2026-10-15T12:31:00Z' },
+    { id: 'first', state: 'pre', startTime: '2026-10-15T12:00:00Z' }
+  ];
+  assert.deepEqual(findSoccerMatchesStartingWithin(events, now).map((event) => event.id), ['first', 'later']);
+});
+
+test('counts live viewers once per identity and expires inactive viewers', () => {
+  const now = Date.parse('2026-10-15T12:00:00Z');
+  const streamId = 'live-stream-test-0001';
+  const firstViewerId = 'viewer-identity-first-0001';
+  const secondViewerId = 'viewer-identity-second-0002';
+  assert.equal(recordLiveStreamViewer(firstViewerId, streamId, now), 1);
+  assert.equal(recordLiveStreamViewer(firstViewerId, streamId, now + 5_000), 1);
+  assert.equal(recordLiveStreamViewer(secondViewerId, streamId, now + 6_000), 2);
+  assert.equal(getActiveLiveViewerCount(streamId, now + 51_000), 1);
+  assert.equal(getActiveLiveViewerCount(streamId, now + 52_000), 0);
 });
 
 test('normalizes match events, lineups, and team statistics from ESPN summary data', () => {
@@ -409,7 +436,23 @@ test('serves the embedded Mini App and its scoreboard API', async (t) => {
   const liveStreamResponse = await fetch(`${baseUrl}/api/mini-app/live-stream`);
   assert.equal(liveStreamResponse.status, 200);
   assert.equal(liveStreamResponse.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await liveStreamResponse.json(), { stream: null });
+  assert.deepEqual(await liveStreamResponse.json(), { stream: null, viewers: 0 });
+  const invalidViewer = await fetch(`${baseUrl}/api/mini-app/live-stream/viewer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ viewerId: 'bad', streamId: 'bad' })
+  });
+  assert.equal(invalidViewer.status, 400);
+  const inactiveStreamViewer = await fetch(`${baseUrl}/api/mini-app/live-stream/viewer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      viewerId: 'viewer-identity-for-test-0001',
+      streamId: 'stream-identity-for-test-0001'
+    })
+  });
+  assert.equal(inactiveStreamViewer.status, 200);
+  assert.deepEqual(await inactiveStreamViewer.json(), { viewers: 0, streamChanged: true });
   const unauthenticatedPreferences = await fetch(`${baseUrl}/api/mini-app/notification-preferences`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -420,6 +463,12 @@ test('serves the embedded Mini App and its scoreboard API', async (t) => {
 
 test('uses the configured public origin with the embedded app path', () => {
   assert.match(getMiniAppUrl(), /^https:\/\/.+\/mini-app\/$/);
+});
+
+test('creates a Mini App link that directly opens the live stream', () => {
+  const url = new URL(getMiniAppLiveStreamUrl());
+  assert.equal(url.pathname, '/mini-app/');
+  assert.equal(url.searchParams.get('stream'), 'live');
 });
 
 test('creates a Mini App link targeting the requested match and Tashkent date', () => {

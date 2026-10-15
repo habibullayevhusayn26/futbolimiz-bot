@@ -46,6 +46,12 @@
   let refreshTimer;
   let activeHlsPlayer = null;
   let liveStreamRequestId = 0;
+  let currentLiveStream = null;
+  let viewerHeartbeatTimer = null;
+  let livePlayerControls = null;
+  let youtubePlayerState = -1;
+  let liveViewerId = '';
+  let fullscreenChangeHandler = null;
   let favoriteTeamIds = new Set();
   let favoriteMatchIds = new Set();
   let favoriteMatchDetails = new Map();
@@ -353,6 +359,13 @@
 
   function stopLiveStream() {
     liveStreamRequestId += 1;
+    window.clearInterval(viewerHeartbeatTimer);
+    viewerHeartbeatTimer = null;
+    livePlayerControls = null;
+    if (fullscreenChangeHandler) {
+      document.removeEventListener('fullscreenchange', fullscreenChangeHandler);
+      fullscreenChangeHandler = null;
+    }
     if (activeHlsPlayer) {
       activeHlsPlayer.destroy();
       activeHlsPlayer = null;
@@ -360,7 +373,60 @@
     liveStreamView.replaceChildren();
   }
 
-  function renderLiveStream(stream) {
+  function updateLiveViewerCount(count) {
+    const countElement = liveStreamView.querySelector('[data-live-viewer-count]');
+    if (countElement) countElement.textContent = new Intl.NumberFormat('uz-UZ').format(count);
+  }
+
+  function getLiveViewerId() {
+    if (liveViewerId) return liveViewerId;
+    const key = 'futbolimiz-live-viewer';
+    try {
+      liveViewerId = window.localStorage.getItem(key) || '';
+      if (!/^[A-Za-z0-9_-]{20,80}$/.test(liveViewerId)) {
+        liveViewerId = window.crypto?.randomUUID?.() ||
+          Array.from(window.crypto.getRandomValues(new Uint8Array(24)), (byte) => byte.toString(16).padStart(2, '0')).join('');
+        window.localStorage.setItem(key, liveViewerId);
+      }
+      return liveViewerId;
+    } catch (error) {
+      console.warn('Live viewer identity could not be stored:', error);
+      liveViewerId = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      return liveViewerId;
+    }
+  }
+
+  async function updateLiveViewerHeartbeat(streamId) {
+    if (document.visibilityState === 'hidden') return;
+    try {
+      const response = await fetch('/api/mini-app/live-stream/viewer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ viewerId: getLiveViewerId(), streamId })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Tomoshabinlar sonini yangilab bo‘lmadi.');
+      if (payload.streamChanged && selectedView === 'stream') {
+        void loadLiveStream();
+        return;
+      }
+      if (currentLiveStream?.id === streamId && selectedView === 'stream') {
+        updateLiveViewerCount(payload.viewers);
+      }
+    } catch (error) {
+      console.warn('Live viewer count could not be refreshed:', error);
+    }
+  }
+
+  function startLiveViewerHeartbeat(streamId) {
+    window.clearInterval(viewerHeartbeatTimer);
+    void updateLiveViewerHeartbeat(streamId);
+    viewerHeartbeatTimer = window.setInterval(() => {
+      void updateLiveViewerHeartbeat(streamId);
+    }, 15_000);
+  }
+
+  function renderLiveStream(stream, viewers = 0) {
     if (activeHlsPlayer) {
       activeHlsPlayer.destroy();
       activeHlsPlayer = null;
@@ -368,8 +434,17 @@
     liveStreamView.replaceChildren();
     const heading = document.createElement('h1');
     heading.className = 'stream-heading';
-    heading.textContent = 'Jonli efir';
-    liveStreamView.append(heading);
+    heading.textContent = stream?.title || 'Jonli efir';
+    const headingRow = document.createElement('div');
+    headingRow.className = 'stream-heading-row';
+    headingRow.append(heading);
+    if (stream) {
+      const viewerBadge = document.createElement('span');
+      viewerBadge.className = 'stream-viewer-count';
+      viewerBadge.innerHTML = `${iconMarkup('user-round')} <span data-live-viewer-count>${new Intl.NumberFormat('uz-UZ').format(viewers)}</span> tomoshabin`;
+      headingRow.append(viewerBadge);
+    }
+    liveStreamView.append(headingRow);
 
     if (!stream) {
       const empty = document.createElement('div');
@@ -383,24 +458,46 @@
 
     const player = document.createElement('div');
     player.className = 'stream-player';
+    player.setAttribute('aria-label', 'Futbolimiz jonli efir pleeri');
+    const stage = document.createElement('div');
+    stage.className = 'stream-stage';
+    const status = document.createElement('p');
+    status.className = 'stream-player-status';
+    status.setAttribute('role', 'status');
+    function setPlayerMessage(message) {
+      status.textContent = message;
+    }
+    let video = null;
+    let frame = null;
     if (stream.type === 'youtube') {
-      const frame = document.createElement('iframe');
-      frame.src = stream.embedUrl;
+      frame = document.createElement('iframe');
+      const embedUrl = new URL(stream.embedUrl);
+      embedUrl.searchParams.set('controls', '0');
+      embedUrl.searchParams.set('enablejsapi', '1');
+      embedUrl.searchParams.set('playsinline', '1');
+      embedUrl.searchParams.set('fs', '1');
+      embedUrl.searchParams.set('rel', '0');
+      embedUrl.searchParams.set('origin', window.location.origin);
+      frame.src = embedUrl.toString();
       frame.title = 'Futbol jonli efiri';
       frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
       frame.referrerPolicy = 'strict-origin-when-cross-origin';
-      frame.allowFullscreen = true;
       frame.loading = 'lazy';
-      player.append(frame);
+      frame.addEventListener('load', () => {
+        frame.contentWindow?.postMessage(JSON.stringify({
+          event: 'command',
+          func: 'addEventListener',
+          args: ['onStateChange']
+        }), 'https://www.youtube-nocookie.com');
+      });
+      stage.append(frame);
     } else if (stream.type === 'hls') {
-      const video = document.createElement('video');
-      video.controls = true;
+      video = document.createElement('video');
       video.playsInline = true;
       video.preload = 'none';
-      player.append(video);
-      const status = document.createElement('p');
-      status.className = 'stream-player-status';
-      status.setAttribute('role', 'status');
+      video.volume = 0.8;
+      video.setAttribute('aria-label', 'Jonli futbol efiri');
+      stage.append(video);
       const HlsPlayer = window.Hls;
       if (HlsPlayer?.isSupported()) {
         const hls = new HlsPlayer();
@@ -410,17 +507,15 @@
         hls.on(HlsPlayer.Events.ERROR, (_event, data) => {
           if (!data.fatal) return;
           console.error('HLS live stream playback failed:', data.type, data.details);
-          status.textContent = 'Efirni ijro etib bo‘lmadi. Keyinroq qayta urinib ko‘ring.';
+          setPlayerMessage('Efirni ijro etib bo‘lmadi. Keyinroq qayta urinib ko‘ring.');
           hls.destroy();
           if (activeHlsPlayer === hls) activeHlsPlayer = null;
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = stream.url;
       } else {
-        status.textContent = 'Bu qurilmada HLS efirini ijro etib bo‘lmaydi.';
+        setPlayerMessage('Bu qurilmada HLS efirini ijro etib bo‘lmaydi.');
       }
-      liveStreamView.append(player, status);
-      return;
     } else {
       const error = document.createElement('p');
       error.className = 'stream-error';
@@ -428,23 +523,146 @@
       liveStreamView.append(error);
       return;
     }
+
+    const controls = document.createElement('div');
+    controls.className = 'stream-controls';
+    const playButton = document.createElement('button');
+    playButton.className = 'stream-control-button stream-play-button';
+    playButton.type = 'button';
+    playButton.setAttribute('aria-label', 'Efirni boshlash');
+    const soundButton = document.createElement('button');
+    soundButton.className = 'stream-control-button stream-sound-button';
+    soundButton.type = 'button';
+    soundButton.setAttribute('aria-label', 'Ovozni o‘chirish');
+    soundButton.textContent = 'Ovoz';
+    const volume = document.createElement('input');
+    volume.className = 'stream-volume';
+    volume.type = 'range';
+    volume.min = '0';
+    volume.max = '100';
+    volume.value = '80';
+    volume.setAttribute('aria-label', 'Efir ovozi');
+    const fullscreenButton = document.createElement('button');
+    fullscreenButton.className = 'stream-control-button stream-fullscreen-button';
+    fullscreenButton.type = 'button';
+    fullscreenButton.setAttribute('aria-label', 'Katta ekranda ko‘rish');
+    fullscreenButton.innerHTML = '<span class="stream-fullscreen-icon" aria-hidden="true"></span><span>Katta ekran</span>';
+    if (stream.type === 'youtube') volume.hidden = true;
+    controls.append(playButton, soundButton, volume, fullscreenButton);
+    player.append(stage, controls);
+    livePlayerControls = { playButton, soundButton, volume, fullscreenButton, video, frame, player };
+
+    const updatePlayButton = (playing) => {
+      playButton.innerHTML = `${iconMarkup(playing ? 'pause' : 'play')}<span>${playing ? 'Pauza' : 'Ko‘rish'}</span>`;
+      playButton.setAttribute('aria-label', playing ? 'Efirni pauza qilish' : 'Efirni boshlash');
+    };
+    updatePlayButton(false);
+    playButton.addEventListener('click', () => {
+      if (video) {
+        if (video.paused) {
+          video.play().catch((error) => {
+            console.warn('Live stream playback could not start:', error);
+            setPlayerMessage('Efirni boshlash uchun qayta bosing.');
+          });
+        } else video.pause();
+      } else {
+        const playing = youtubePlayerState === 1;
+        frame.contentWindow?.postMessage(JSON.stringify({
+          event: 'command',
+          func: playing ? 'pauseVideo' : 'playVideo',
+          args: ''
+        }), 'https://www.youtube-nocookie.com');
+        updatePlayButton(!playing);
+      }
+    });
+    if (video) {
+      video.addEventListener('play', () => updatePlayButton(true));
+      video.addEventListener('pause', () => updatePlayButton(false));
+      video.addEventListener('volumechange', () => {
+        volume.value = String(Math.round(video.volume * 100));
+        soundButton.textContent = video.muted || video.volume === 0 ? 'Ovoz yo‘q' : 'Ovoz';
+        soundButton.setAttribute('aria-label', video.muted ? 'Ovozni yoqish' : 'Ovozni o‘chirish');
+      });
+      volume.addEventListener('input', () => {
+        video.volume = Number(volume.value) / 100;
+        video.muted = video.volume === 0;
+      });
+      soundButton.addEventListener('click', () => {
+        video.muted = !video.muted;
+        if (!video.muted && video.volume === 0) video.volume = 0.8;
+      });
+    } else {
+      soundButton.addEventListener('click', () => {
+        const muted = soundButton.dataset.muted === 'true';
+        frame.contentWindow?.postMessage(JSON.stringify({
+          event: 'command',
+          func: muted ? 'unMute' : 'mute',
+          args: ''
+        }), 'https://www.youtube-nocookie.com');
+        soundButton.dataset.muted = String(!muted);
+        soundButton.textContent = muted ? 'Ovoz' : 'Ovoz yo‘q';
+        soundButton.setAttribute('aria-label', muted ? 'Ovozni o‘chirish' : 'Ovozni yoqish');
+      });
+    }
+    fullscreenButton.addEventListener('click', async () => {
+      try {
+        if (document.fullscreenElement === player) {
+          await document.exitFullscreen();
+        } else if (player.requestFullscreen) {
+          await player.requestFullscreen();
+        } else if (video?.webkitEnterFullscreen) {
+          video.webkitEnterFullscreen();
+        } else {
+          setPlayerMessage('Bu qurilmada katta ekran rejimi mavjud emas.');
+        }
+      } catch (error) {
+        if (video?.webkitEnterFullscreen) {
+          video.webkitEnterFullscreen();
+          return;
+        }
+        console.warn('Live stream fullscreen could not be opened:', error);
+        setPlayerMessage('Katta ekran rejimini ochib bo‘lmadi.');
+      }
+    });
+    fullscreenChangeHandler = () => {
+      const fullscreen = document.fullscreenElement === player;
+      fullscreenButton.innerHTML = `<span class="stream-fullscreen-icon${fullscreen ? ' exit' : ''}" aria-hidden="true"></span><span>${fullscreen ? 'Yopish' : 'Katta ekran'}</span>`;
+      fullscreenButton.setAttribute('aria-label', fullscreen ? 'Katta ekran rejimidan chiqish' : 'Katta ekranda ko‘rish');
+    };
+    document.addEventListener('fullscreenchange', fullscreenChangeHandler);
+    player.append(status);
     liveStreamView.append(player);
+    if (stream.match) {
+      const matchInfo = document.createElement('p');
+      matchInfo.className = 'stream-match-info';
+      matchInfo.textContent = `${stream.match.leagueName || ''}${stream.match.leagueName ? ' · ' : ''}${stream.match.homeName} — ${stream.match.awayName}`;
+      liveStreamView.append(matchInfo);
+    }
+    startLiveViewerHeartbeat(stream.id);
   }
 
-  async function loadLiveStream() {
-    stopLiveStream();
+  async function loadLiveStream({ play = true } = {}) {
+    if (play) stopLiveStream();
     const requestId = ++liveStreamRequestId;
-    const loading = document.createElement('div');
-    loading.className = 'skeleton';
-    liveStreamView.append(loading);
+    if (play) {
+      const loading = document.createElement('div');
+      loading.className = 'skeleton';
+      liveStreamView.append(loading);
+    }
     try {
       const response = await fetch('/api/mini-app/live-stream', { cache: 'no-store' });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'Jonli efirni yuklab bo‘lmadi.');
-      if (requestId !== liveStreamRequestId || selectedView !== 'stream') return;
-      renderLiveStream(payload.stream);
+      if (requestId !== liveStreamRequestId) return;
+      currentLiveStream = payload.stream;
+      if (selectedView === 'matches') renderEvents();
+      if (play && selectedView === 'stream') renderLiveStream(payload.stream, payload.viewers);
     } catch (error) {
-      if (requestId !== liveStreamRequestId || selectedView !== 'stream') return;
+      if (requestId !== liveStreamRequestId) return;
+      if (!play || selectedView !== 'stream') {
+        console.error('Live stream details could not be loaded:', error);
+        return;
+      }
       liveStreamView.replaceChildren();
       const message = document.createElement('p');
       message.className = 'stream-error';
@@ -452,6 +670,30 @@
       liveStreamView.append(message);
     }
   }
+
+  window.addEventListener('message', (event) => {
+    if (!livePlayerControls?.frame ||
+        event.source !== livePlayerControls.frame.contentWindow ||
+        !['https://www.youtube-nocookie.com', 'https://www.youtube.com'].includes(event.origin)) return;
+    let payload;
+    try {
+      payload = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+    } catch {
+      return;
+    }
+    const state = payload?.info?.playerState ?? payload?.info;
+    if (payload?.event === 'onStateChange' || payload?.event === 'infoDelivery') {
+      youtubePlayerState = Number(state);
+      livePlayerControls.playButton.innerHTML = `${iconMarkup(youtubePlayerState === 1 ? 'pause' : 'play')}<span>${youtubePlayerState === 1 ? 'Pauza' : 'Ko‘rish'}</span>`;
+      livePlayerControls.playButton.setAttribute('aria-label', youtubePlayerState === 1 ? 'Efirni pauza qilish' : 'Efirni boshlash');
+    }
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && selectedView === 'stream' && currentLiveStream) {
+      void updateLiveViewerHeartbeat(currentLiveStream.id);
+    }
+  });
 
   function updateLeagues(leagues) {
     currentLeagues = leagues;
@@ -639,19 +881,24 @@
 
   function eventMarkup(event) {
     const card = document.createElement('article');
+    const hasLiveStream = currentLiveStream?.match?.id === String(event.id) &&
+      currentLiveStream.match.leagueId === event.leagueId;
     card.className = `match-card${event.state === 'in' ? ' live' : ''}`;
+    if (hasLiveStream) card.classList.add('broadcast-live');
     card.dataset.eventId = event.id;
     card.tabIndex = 0;
     card.setAttribute('role', 'button');
-    card.setAttribute('aria-label', `${event.home.name} — ${event.away.name}, o‘yin tafsilotlarini ochish`);
+    card.setAttribute('aria-label', `${event.home.name} — ${event.away.name}, ${hasLiveStream ? 'jonli efirni ochish' : 'o‘yin tafsilotlarini ochish'}`);
     card.addEventListener('click', (clickEvent) => {
       if (clickEvent.target.closest('button')) return;
-      openMatchDetail(event);
+      if (hasLiveStream) openLiveStream();
+      else openMatchDetail(event);
     });
     card.addEventListener('keydown', (keyEvent) => {
       if (keyEvent.target !== card || (keyEvent.key !== 'Enter' && keyEvent.key !== ' ')) return;
       keyEvent.preventDefault();
-      openMatchDetail(event);
+      if (hasLiveStream) openLiveStream();
+      else openMatchDetail(event);
     });
     const heading = document.createElement('div');
     heading.className = 'league-heading match-league-heading';
@@ -677,6 +924,12 @@
         ? 'Yakunlandi'
         : formattedTime(event.startTime);
     meta.innerHTML = `<span>${formattedTime(event.startTime)}</span><span class="match-state${event.state === 'in' ? ' live' : ''}">${stateLabel}</span>`;
+    if (hasLiveStream) {
+      const liveTag = document.createElement('span');
+      liveTag.className = 'match-stream-tag';
+      liveTag.innerHTML = `${iconMarkup('play')} <span>EFIRDA · KO‘RISH</span>`;
+      meta.append(liveTag);
+    }
     card.append(meta);
 
     const teams = document.createElement('div');
@@ -697,6 +950,17 @@
       card.append(venue);
     }
     return card;
+  }
+
+  function openLiveStream(addHistoryEntry = true) {
+    if (addHistoryEntry) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('stream', 'live');
+      url.searchParams.delete('match');
+      url.searchParams.delete('league');
+      window.history.pushState({ liveStream: true }, '', url);
+    }
+    selectView('stream');
   }
 
   function renderEvents() {
@@ -1259,43 +1523,54 @@
     loadScoreboard();
   }
 
+  const requestedLiveStream = new URLSearchParams(window.location.search).get('stream') === 'live';
   dateInput.value = /^\d{4}-\d{2}-\d{2}$/.test(requestedMatchDate || '')
     ? requestedMatchDate
     : tashkentDateString(new Date());
+  function selectView(view) {
+    selectedView = view;
+    document.querySelectorAll('.view-tab').forEach((tab) => {
+      const active = tab.dataset.view === selectedView;
+      tab.classList.toggle('active', active);
+      tab.setAttribute('aria-pressed', String(active));
+    });
+    const isMatches = selectedView === 'matches';
+    const isStandings = selectedView === 'standings';
+    const isStream = selectedView === 'stream';
+    matchControls.hidden = !isMatches;
+    liveBanner.hidden = isStandings || isStream;
+    notificationHint.hidden = isStream;
+    statusMessage.hidden = isStream;
+    controls.hidden = isStream;
+    standingsSeason.hidden = !isStandings;
+    list.hidden = isStream;
+    liveStreamView.hidden = !isStream;
+    footer.hidden = isStream;
+    if (isStandings) {
+      stopLiveStream();
+      loadStandings();
+    } else if (isStream) {
+      standingsRequestId += 1;
+      setMessage();
+      loadLiveStream();
+    } else {
+      stopLiveStream();
+      standingsRequestId += 1;
+      standingsSeason.hidden = true;
+      setMessage();
+      renderEvents();
+    }
+  }
   document.querySelectorAll('.view-tab').forEach((tab) => {
     tab.addEventListener('click', () => {
-      selectedView = tab.dataset.view;
-      document.querySelectorAll('.view-tab').forEach((item) => {
-        const active = item === tab;
-        item.classList.toggle('active', active);
-        item.setAttribute('aria-pressed', String(active));
-      });
-      const isMatches = selectedView === 'matches';
-      const isStandings = selectedView === 'standings';
-      const isStream = selectedView === 'stream';
-      matchControls.hidden = !isMatches;
-      liveBanner.hidden = isStandings || isStream;
-      notificationHint.hidden = isStream;
-      statusMessage.hidden = isStream;
-      controls.hidden = isStream;
-      standingsSeason.hidden = !isStandings;
-      list.hidden = isStream;
-      liveStreamView.hidden = !isStream;
-      footer.hidden = isStream;
-      if (isStandings) {
-        stopLiveStream();
-        loadStandings();
-      } else if (isStream) {
-        standingsRequestId += 1;
-        setMessage();
-        loadLiveStream();
-      } else {
-        stopLiveStream();
-        standingsRequestId += 1;
-        standingsSeason.hidden = true;
-        setMessage();
-        renderEvents();
+      if (tab.dataset.view !== 'stream') {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('stream')) {
+          url.searchParams.delete('stream');
+          window.history.replaceState({}, '', url);
+        }
       }
+      selectView(tab.dataset.view);
     });
   });
   dateInput.addEventListener('change', loadScoreboard);
@@ -1347,8 +1622,14 @@
     else if (profileOpen) goBackFromProfile();
   });
   window.addEventListener('popstate', () => {
-    const matchId = new URLSearchParams(window.location.search).get('match');
-    const isProfile = new URLSearchParams(window.location.search).get('profile') === '1';
+    const params = new URLSearchParams(window.location.search);
+    const matchId = params.get('match');
+    const isProfile = params.get('profile') === '1';
+    if (params.get('stream') === 'live') {
+      if (selectedView !== 'stream') selectView('stream');
+    } else if (selectedView === 'stream') {
+      selectView('matches');
+    }
     if (profileOpen && !isProfile) closeProfile(false);
     if (isProfile && !profileOpen) {
       profileOpen = true;
@@ -1386,6 +1667,8 @@
   recordVisit();
   loadNotificationPreferences();
   loadScoreboard();
+  if (requestedLiveStream) selectView('stream');
+  else loadLiveStream({ play: false });
   refreshTimer = window.setInterval(() => {
     if (isToday(dateInput.value)) loadScoreboard();
   }, 60_000);
