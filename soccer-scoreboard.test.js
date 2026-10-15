@@ -116,17 +116,18 @@ test('loads legacy live stream settings and validates multiple saved streams', (
   assert.equal(normalizeSoccerLiveStream('https://media.example.com/live.mp4'), null);
 });
 
-test('selects upcoming and recently started matches within 30 minutes in kickoff order', () => {
+test('selects all live matches and upcoming matches within 30 minutes', () => {
   const now = Date.parse('2026-10-15T12:00:00Z');
   const events = [
     { id: 'later', state: 'pre', startTime: '2026-10-15T12:25:00Z' },
     { id: 'started-recently', state: 'in', startTime: '2026-10-15T11:45:00Z' },
-    { id: 'started-too-early', state: 'in', startTime: '2026-10-15T11:29:00Z' },
+    { id: 'live-for-an-hour', state: 'in', startTime: '2026-10-15T11:00:00Z' },
     { id: 'finished', state: 'post', startTime: '2026-10-15T11:50:00Z' },
     { id: 'too-late', state: 'pre', startTime: '2026-10-15T12:31:00Z' },
     { id: 'first', state: 'pre', startTime: '2026-10-15T12:00:00Z' }
   ];
   assert.deepEqual(findSoccerMatchesStartingWithin(events, now).map((event) => event.id), [
+    'live-for-an-hour',
     'started-recently',
     'first',
     'later'

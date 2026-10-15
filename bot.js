@@ -721,7 +721,7 @@ function findSoccerMatchesStartingWithin(events, now = Date.now(), windowMs = 30
       const startTime = Date.parse(event.startTime || '');
       if (!Number.isFinite(startTime)) return false;
       return (event.state === 'pre' && startTime >= now && startTime <= now + windowMs) ||
-        (event.state === 'in' && startTime >= now - windowMs && startTime <= now);
+        event.state === 'in';
     })
     .sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime));
 }
