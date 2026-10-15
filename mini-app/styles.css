@@ -917,6 +917,48 @@ h1 {
   font-size: 16px;
 }
 
+.profile-list li.profile-team-item {
+  gap: 9px;
+}
+
+.profile-team-logo,
+.profile-team-placeholder {
+  display: grid;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 50%;
+  background: #f3f6fa;
+  object-fit: contain;
+}
+
+.profile-team-placeholder {
+  color: #758398;
+  font-size: 15px;
+}
+
+.profile-team-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-team-toggle {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.profile-data-message {
+  margin: 8px 0 0;
+  color: #758398;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.profile-data-message.error {
+  color: #b42332;
+}
+
 .profile-empty,
 .profile-empty-list {
   display: grid;

@@ -42,7 +42,9 @@
   let detailRequestId = 0;
   let activeDetailTab = 'lineups';
   let profileOpen = false;
-  const knownTeamNames = new Map();
+  const knownTeamDetails = new Map();
+  let profileTeamDetailsLoading = false;
+  let profileTeamDetailsError = '';
 
   function localDateString(date) {
     const year = date.getFullYear();
@@ -112,7 +114,10 @@
       if (!response.ok) throw new Error(payload.error || 'Bildirishnoma sozlamalarini yuklab bo‘lmadi.');
       favoriteTeamIds = new Set(payload.favoriteTeamIds);
       favoriteMatchIds = new Set(payload.favoriteMatchIds);
-      if (profileOpen) renderProfile();
+      if (profileOpen) {
+        renderProfile();
+        loadProfileTeamDetails();
+      }
       updateNotificationHint();
       if (selectedView === 'standings') loadStandings();
       else renderEvents();
@@ -306,7 +311,7 @@
     standingsSeason.textContent = `Joriy mavsum · ${tables[0].season}`;
     standingsSeason.hidden = false;
     for (const table of tables) {
-      for (const team of table.teams || []) knownTeamNames.set(String(team.id), team.name);
+      for (const team of table.teams || []) rememberTeamDetails(team);
       const section = document.createElement('section');
       section.className = 'standings-card';
       const heading = document.createElement('div');
@@ -763,8 +768,48 @@
 
   function rememberEventNames(events) {
     for (const event of events) {
-      if (event.home?.id) knownTeamNames.set(String(event.home.id), event.home.name);
-      if (event.away?.id) knownTeamNames.set(String(event.away.id), event.away.name);
+      if (event.home?.id) rememberTeamDetails(event.home);
+      if (event.away?.id) rememberTeamDetails(event.away);
+    }
+  }
+
+  function rememberTeamDetails(team) {
+    const id = String(team.id || '');
+    if (!id) return;
+    const existing = knownTeamDetails.get(id) || {};
+    knownTeamDetails.set(id, {
+      name: team.name || existing.name || '',
+      logo: team.logo || existing.logo || ''
+    });
+  }
+
+  async function loadProfileTeamDetails() {
+    if (profileTeamDetailsLoading || !favoriteTeamIds.size ||
+        [...favoriteTeamIds].every((id) => knownTeamDetails.get(String(id))?.name)) return;
+    profileTeamDetailsLoading = true;
+    profileTeamDetailsError = '';
+    renderProfile();
+    try {
+      const params = new URLSearchParams({
+        league: 'all',
+        season: String(new Date().getFullYear())
+      });
+      const response = await fetch(`/api/mini-app/standings?${params}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Klub ma’lumotlarini yuklab bo‘lmadi.');
+      for (const table of payload.tables || []) {
+        for (const team of table.teams || []) rememberTeamDetails(team);
+      }
+      if (payload.partial) {
+        profileTeamDetailsError = `Ayrim ligalar klublari yuklanmadi: ${payload.failedLeagues.join(', ')}.`;
+      }
+      renderProfile();
+    } catch (error) {
+      profileTeamDetailsError = error.message || 'Klub nomlari va logotiplarini yuklab bo‘lmadi.';
+      console.error('Profile team details could not be loaded:', error);
+      renderProfile();
+    } finally {
+      profileTeamDetailsLoading = false;
     }
   }
 
@@ -784,10 +829,14 @@
     const avatar = user.photo_url
       ? `<img src="${escapeAttribute(user.photo_url)}" alt="" onerror="this.remove()">`
       : `<span>${escapeHtml(initials || '👤')}</span>`;
-    const teams = [...favoriteTeamIds].map((id) => ({
-      id,
-      name: knownTeamNames.get(String(id)) || `Klub ID: ${id}`
-    }));
+    const teams = [...favoriteTeamIds].map((id) => {
+      const details = knownTeamDetails.get(String(id)) || {};
+      return {
+        id: String(id),
+        name: details.name || 'Klub nomi topilmadi',
+        logo: details.logo || `https://a.espncdn.com/i/teamlogos/soccer/500/${encodeURIComponent(id)}.png`
+      };
+    });
     const matches = [...favoriteMatchIds].map((id) => {
       const event = currentEvents.find((item) => item.id === id);
       return {
@@ -808,8 +857,14 @@
       </section>
       <section class="profile-section">
         <div class="profile-section-heading"><h2>Sevimli klublar</h2><span>${teams.length}</span></div>
-        ${teams.length ? `<ul class="profile-list">${teams.map((team) => `<li><span class="profile-list-icon">🔔</span><span>${escapeHtml(team.name)}</span></li>`).join('')}</ul>`
+        ${teams.length ? `<ul class="profile-list">${teams.map((team) => `<li class="profile-team-item" data-profile-team-id="${escapeAttribute(team.id)}">
+          <img class="profile-team-logo" src="${escapeAttribute(team.logo)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'profile-team-placeholder',textContent:'⚽'}))">
+          <span class="profile-team-name">${escapeHtml(team.name)}</span>
+          <span class="profile-team-action" data-id="${escapeAttribute(team.id)}"></span>
+        </li>`).join('')}</ul>`
           : '<p class="profile-empty-list">Hozircha klub tanlanmagan.</p>'}
+        ${profileTeamDetailsLoading ? '<p class="profile-data-message">Klub nomlari yuklanmoqda…</p>' : ''}
+        ${profileTeamDetailsError ? `<p class="profile-data-message error">${escapeHtml(profileTeamDetailsError)}</p>` : ''}
       </section>
       <section class="profile-section">
         <div class="profile-section-heading"><h2>Obuna bo‘lgan o‘yinlar</h2><span>${matches.length}</span></div>
@@ -818,6 +873,16 @@
       </section>
       <p class="profile-note">Klub yoki o‘yin bildirishnomalarini istalgan vaqtda qo‘ng‘iroqcha tugmasi orqali yoqib-o‘chirishingiz mumkin.</p>
     `;
+    profileContent.querySelectorAll('.profile-team-action').forEach((placeholder) => {
+      const team = teams.find((item) => item.id === placeholder.dataset.id);
+      const button = notificationButton('team', team.id, team.name);
+      if (button) {
+        button.classList.add('profile-team-toggle');
+        placeholder.replaceWith(button);
+      } else {
+        placeholder.remove();
+      }
+    });
   }
 
   function openProfile() {
@@ -827,6 +892,7 @@
     profileView.hidden = false;
     document.body.classList.add('profile-open');
     renderProfile();
+    loadProfileTeamDetails();
     const url = new URL(window.location.href);
     url.searchParams.set('profile', '1');
     window.history.pushState({ profileView: true }, '', url);
