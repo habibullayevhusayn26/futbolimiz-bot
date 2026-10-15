@@ -83,3 +83,13 @@ test('offers Telegram chat selection buttons that request bot admin rights', () 
   assert.equal(keyboard.keyboard[0][0].request_chat.bot_administrator_rights.can_post_messages, false);
   assert.equal(Object.hasOwn(keyboard.keyboard[1][0].request_chat.bot_administrator_rights, 'can_post_messages'), false);
 });
+
+test('requests delete and invite rights when selecting a chat for join-request management', () => {
+  const keyboard = createRequiredChatPickerKeyboard(11, 22, 'join_requests');
+
+  for (const row of keyboard.keyboard.slice(0, 2)) {
+    const rights = row[0].request_chat.bot_administrator_rights;
+    assert.equal(rights.can_delete_messages, true);
+    assert.equal(rights.can_invite_users, true);
+  }
+});

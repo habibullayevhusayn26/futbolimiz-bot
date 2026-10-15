@@ -325,7 +325,7 @@ const activeAdminPanels = new Set();
 const joinRequestChatIds = new Set();
 const pendingJoinApprovals = new Set();
 const pendingBulkJoinApprovals = new Set();
-const pendingRequiredChannelAdds = new Map();
+const pendingChatSelections = new Map();
 const data = { settings: { requiredChannels: [] } };
 const premiumEmojis = {
   welcome: '<tg-emoji emoji-id="5199785165735367039">⚡️</tg-emoji>',
@@ -335,9 +335,9 @@ const premiumEmojis = {
   web: '<tg-emoji emoji-id="5231482153228835967">🌐</tg-emoji>'
 };
 const defaultMessages = {
-  welcome: `${premiumEmojis.welcome} Assalomu alaykum {nickname}\n\n${premiumEmojis.bot} Botni kanal yoki guruhga administrator qiling va /connect bilan ulang. Boshqarish uchun /mychats buyrug\'ini yuboring.`,
+  welcome: `${premiumEmojis.welcome} Assalomu alaykum {nickname}\n\n${premiumEmojis.bot} Kanal yoki guruhingizni ulash uchun “Kanal/guruh ulash” tugmasini bosing va chatni tanlang. Boshqarish uchun /mychats buyrug\'ini yuboring.`,
   subscriptionRequired: `${premiumEmojis.warning} Botdan foydalanish uchun quyidagi kanallarga obuna bo\'ling`,
-  help: `${premiumEmojis.web} Guruh uchun botni administrator qiling va guruhda /connect yuboring. Kanal uchun avval botning shaxsiy chatida /connect yuboring, berilgan 6 xonali kodni kanalda /connect 123456 ko\'rinishida yuboring. Chatlaringizni /mychats bilan boshqaring; avtomatik qabulni to\'xtatib, kutilayotgan so\'rovlarni tugma bilan tasdiqlashingiz mumkin.`
+  help: `${premiumEmojis.web} Kanal yoki guruhingizni ulash uchun botning Start xabaridagi “Kanal/guruh ulash” tugmasini bosing, chatni tanlang va Telegram so\'ragan admin huquqlarini tasdiqlang. Chatlaringizni /mychats bilan boshqaring; avtomatik qabulni to\'xtatib, kutilayotgan so\'rovlarni tugma bilan tasdiqlashingiz mumkin.`
 };
 function isAdmin(ctx) {
   const telegramId = Number(ctx.from?.id);
@@ -650,11 +650,19 @@ async function checkFullAdmin(ctx, username) {
   };
 }
 
-function createRequiredChatRequestButton(text, requestId, chatIsChannel) {
+async function verifySelectedJoinRequestChat(ctx, chatId, actorId) {
+  const chat = await ctx.telegram.getChat(chatId);
+  const botInfo = await ctx.telegram.getMe();
+  await verifyJoinRequestChat({ telegram: ctx.telegram, botInfo }, chat, actorId);
+  return chat;
+}
+
+function createRequiredChatRequestButton(text, requestId, chatIsChannel, purpose) {
+  const canDeleteMessages = purpose === 'join_requests';
   const administratorRights = {
     is_anonymous: false,
     can_manage_chat: true,
-    can_delete_messages: false,
+    can_delete_messages: canDeleteMessages,
     can_manage_video_chats: false,
     can_restrict_members: false,
     can_promote_members: false,
@@ -674,11 +682,11 @@ function createRequiredChatRequestButton(text, requestId, chatIsChannel) {
   };
 }
 
-function createRequiredChatPickerKeyboard(channelRequestId, groupRequestId) {
+function createRequiredChatPickerKeyboard(channelRequestId, groupRequestId, purpose = 'required_subscription') {
   return {
     keyboard: [
-      [createRequiredChatRequestButton('📢 Kanal tanlash', channelRequestId, true)],
-      [createRequiredChatRequestButton('👥 Guruh tanlash', groupRequestId, false)],
+      [createRequiredChatRequestButton('📢 Kanal tanlash', channelRequestId, true, purpose)],
+      [createRequiredChatRequestButton('👥 Guruh tanlash', groupRequestId, false, purpose)],
       [{ text: '❌ Bekor qilish' }]
     ],
     resize_keyboard: true,
@@ -687,90 +695,115 @@ function createRequiredChatPickerKeyboard(channelRequestId, groupRequestId) {
   };
 }
 
-function clearRequiredChatRequests(userId) {
-  for (const [requestId, request] of pendingRequiredChannelAdds) {
-    if (request.userId === userId) pendingRequiredChannelAdds.delete(requestId);
+function clearChatSelections(userId) {
+  for (const [requestId, request] of pendingChatSelections) {
+    if (request.userId === userId) pendingChatSelections.delete(requestId);
   }
 }
 
-async function startRequiredChatPicker(ctx) {
+async function startChatPicker(ctx, purpose) {
   const userId = Number(ctx.from.id);
-  clearRequiredChatRequests(userId);
+  clearChatSelections(userId);
 
   let channelRequestId;
   let groupRequestId;
   do {
     channelRequestId = crypto.randomInt(1, 2_147_483_647);
-  } while (pendingRequiredChannelAdds.has(channelRequestId));
-  pendingRequiredChannelAdds.set(channelRequestId, {
+  } while (pendingChatSelections.has(channelRequestId));
+  pendingChatSelections.set(channelRequestId, {
     userId,
-    expiresAt: Date.now() + 10 * 60 * 1000
+    expiresAt: Date.now() + 10 * 60 * 1000,
+    purpose
   });
   do {
     groupRequestId = crypto.randomInt(1, 2_147_483_647);
-  } while (groupRequestId === channelRequestId || pendingRequiredChannelAdds.has(groupRequestId));
-  pendingRequiredChannelAdds.set(groupRequestId, {
+  } while (groupRequestId === channelRequestId || pendingChatSelections.has(groupRequestId));
+  pendingChatSelections.set(groupRequestId, {
     userId,
-    expiresAt: Date.now() + 10 * 60 * 1000
+    expiresAt: Date.now() + 10 * 60 * 1000,
+    purpose
   });
 
   try {
     await ctx.telegram.sendMessage(
       ctx.chat.id,
-      'Kanal yoki guruhni tanlang. Telegram botni tanlangan joyga admin qilish huquqlarini so\'raydi.',
-      { reply_markup: createRequiredChatPickerKeyboard(channelRequestId, groupRequestId) }
+      'Kanal yoki guruhni tanlang. Telegram botni kerakli admin huquqlari bilan qo\'shishni taklif qiladi.',
+      { reply_markup: createRequiredChatPickerKeyboard(channelRequestId, groupRequestId, purpose) }
     );
   } catch (error) {
-    clearRequiredChatRequests(userId);
+    clearChatSelections(userId);
     throw error;
   }
 }
 
 async function handleSharedRequiredChat(ctx, sharedChat) {
   const requesterId = Number(ctx.from?.id);
-  const request = pendingRequiredChannelAdds.get(sharedChat.request_id);
+  const request = pendingChatSelections.get(sharedChat.request_id);
   if (!request || request.userId !== requesterId) return;
-  if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) {
-    clearRequiredChatRequests(requesterId);
+  if (request.purpose === 'required_subscription' && (!isAdmin(ctx) || !hasPermission(ctx, 'settings'))) {
+    clearChatSelections(requesterId);
     await ctx.telegram.sendMessage(requesterId, 'Ruxsat yo\'q.', {
       reply_markup: { remove_keyboard: true }
     });
     return;
   }
   if (request.expiresAt <= Date.now()) {
-    clearRequiredChatRequests(requesterId);
+    clearChatSelections(requesterId);
     await ctx.telegram.sendMessage(requesterId, 'Tanlash muddati tugadi. Admin paneldan qaytadan boshlang.', {
       reply_markup: { remove_keyboard: true }
     });
     return;
   }
 
-  clearRequiredChatRequests(requesterId);
+  clearChatSelections(requesterId);
   try {
-    const channel = await checkFullAdmin(
-      { telegram: ctx.telegram, from: ctx.from },
-      sharedChat.chat_id
-    );
-    if (!data.settings.requiredChannels.some((item) => item.id === channel.id)) {
-      const currentChannels = data.settings.requiredChannels;
-      data.settings.requiredChannels = [...currentChannels, channel];
-      try {
-        await saveSettings();
-      } catch (error) {
-        data.settings.requiredChannels = currentChannels;
-        throw error;
+    const chat = request.purpose === 'required_subscription'
+      ? await checkFullAdmin({ telegram: ctx.telegram, from: ctx.from }, sharedChat.chat_id)
+      : await verifySelectedJoinRequestChat(ctx, sharedChat.chat_id, requesterId);
+
+    if (request.purpose === 'required_subscription') {
+      if (!data.settings.requiredChannels.some((item) => item.id === chat.id)) {
+        const currentChannels = data.settings.requiredChannels;
+        data.settings.requiredChannels = [...currentChannels, chat];
+        try {
+          await saveSettings();
+        } catch (error) {
+          data.settings.requiredChannels = currentChannels;
+          throw error;
+        }
       }
+      await ctx.telegram.sendMessage(
+        requesterId,
+        `✅ “${chat.title}” majburiy obuna ${['group', 'supergroup'].includes(chat.type) ? 'guruhi' : 'kanali'} sifatida qo'shildi.`,
+        { reply_markup: { remove_keyboard: true } }
+      );
+      return;
     }
+
+    await JoinRequestChat.findOneAndUpdate(
+      { chatId: chat.id },
+      {
+        $set: {
+          title: chat.title || chat.username || String(chat.id),
+          type: chat.type,
+          username: chat.username ? `@${chat.username}` : '',
+          linkedBy: requesterId
+        },
+        $setOnInsert: { paused: false }
+      },
+      { upsert: true, setDefaultsOnInsert: true }
+    );
+    joinRequestChatIds.add(String(chat.id));
     await ctx.telegram.sendMessage(
       requesterId,
-      `✅ “${channel.title}” majburiy obuna ${['group', 'supergroup'].includes(channel.type) ? 'guruhi' : 'kanali'} sifatida qo'shildi.`,
+      `✅ “${chat.title || chat.username || chat.id}” chat ulandi. Qo'shilish so'rovlarini /mychats orqali boshqarishingiz mumkin.`,
       { reply_markup: { remove_keyboard: true } }
     );
   } catch (error) {
-    console.error(`Required chat setup failed for ${sharedChat.chat_id}:`, error.response?.description || error.message);
+    console.error(`Chat setup failed for ${sharedChat.chat_id}:`, error.response?.description || error.message);
     await ctx.telegram.sendMessage(
       requesterId,
-      `Chatni qo'shib bo'lmadi: ${error.message || 'xatolik yuz berdi'}. Bot tanlangan chatda admin ekanini tekshiring.`,
+      `Chatni ulab bo'lmadi: ${error.message || 'xatolik yuz berdi'}. Bot tanlangan chatda kerakli admin huquqlariga ega ekanini tekshiring.`,
       { reply_markup: { remove_keyboard: true } }
     );
   }
@@ -2203,7 +2236,7 @@ bot.action('admin:subscription_private', async (ctx) => {
   }
   ctx.session = { adminPanelActive: true };
   try {
-    return await startRequiredChatPicker(ctx);
+    return await startChatPicker(ctx, 'required_subscription');
   } catch (error) {
     console.error('Required channel picker could not be sent:', error.response?.description || error.message);
     return ctx.reply(`Kanal yoki guruh tanlash oynasini ochib bo'lmadi: ${error.response?.description || error.message}`);
@@ -2213,7 +2246,7 @@ bot.action('admin:subscription_private', async (ctx) => {
 bot.action('admin:subscription_private_cancel', async (ctx) => {
   await ctx.answerCbQuery();
   if (!isAdmin(ctx)) return ctx.reply('Ruxsat yo\'q.');
-  clearRequiredChatRequests(Number(ctx.from.id));
+  clearChatSelections(Number(ctx.from.id));
   ctx.session = { adminPanelActive: true };
   return ctx.reply('Kanal/guruh tanlash bekor qilindi.', adminKeyboard(ctx));
 });
@@ -2221,9 +2254,14 @@ bot.action('admin:subscription_private_cancel', async (ctx) => {
 bot.action('welcome:join_chat_connect', async (ctx) => {
   await ctx.answerCbQuery();
   if (ctx.chat?.type !== 'private') {
-    return ctx.reply('Kanal yoki guruh ulash kodini olish uchun botning shaxsiy chatida ushbu tugmani bosing.');
+    return ctx.reply('Kanal yoki guruh ulash uchun botning shaxsiy chatida Start xabaridagi tugmani bosing.');
   }
-  return issueJoinRequestLinkCode(ctx);
+  try {
+    return await startChatPicker(ctx, 'join_requests');
+  } catch (error) {
+    console.error('Join-request chat picker could not be sent:', error.response?.description || error.message);
+    return ctx.reply(`Kanal yoki guruh tanlash oynasini ochib bo'lmadi: ${error.response?.description || error.message}`);
+  }
 });
 
 bot.action('welcome:required_list', async (ctx) => {
@@ -2296,10 +2334,10 @@ bot.on('text', async (ctx) => {
   const rawText = ctx.message.text;
   const value = rawText.trim();
   const step = ctx.session?.step;
-  if (value === '❌ Bekor qilish' && pendingRequiredChannelAdds.size) {
+  if (value === '❌ Bekor qilish' && pendingChatSelections.size) {
     const userId = Number(ctx.from?.id);
-    if ([...pendingRequiredChannelAdds.values()].some((request) => request.userId === userId)) {
-      clearRequiredChatRequests(userId);
+    if ([...pendingChatSelections.values()].some((request) => request.userId === userId)) {
+      clearChatSelections(userId);
       ctx.session = { adminPanelActive: true };
       return ctx.telegram.sendMessage(userId, 'Kanal/guruh tanlash bekor qilindi.', {
         reply_markup: { remove_keyboard: true }
@@ -2384,9 +2422,14 @@ bot.on('text', async (ctx) => {
   }
   if (value === 'Kanal/guruh ulash') {
     if (ctx.chat?.type !== 'private') {
-      return ctx.reply('Kanal yoki guruh ulash kodini olish uchun botning shaxsiy chatida ushbu tugmani bosing.');
+      return ctx.reply('Kanal yoki guruh ulash uchun botning shaxsiy chatidagi Start tugmasidan foydalaning.');
     }
-    return issueJoinRequestLinkCode(ctx);
+    try {
+      return await startChatPicker(ctx, 'join_requests');
+    } catch (error) {
+      console.error('Join-request chat picker could not be sent:', error.response?.description || error.message);
+      return ctx.reply(`Kanal yoki guruh tanlash oynasini ochib bo'lmadi: ${error.response?.description || error.message}`);
+    }
   }
   if (value === 'Ulangan kanallar ro\'yxati') return showJoinRequestChats(ctx);
   if (value === 'Yordam') return ctx.reply(configuredMessage('help', ctx), replyOptions());
