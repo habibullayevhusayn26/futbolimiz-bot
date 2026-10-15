@@ -1446,13 +1446,19 @@ function welcomeMessage(ctx) {
   return configuredMessage('welcome', ctx);
 }
 
-function welcomeMarkup(ctx) {
+function welcomeMarkup(ctx, liveStreams = soccerLiveStreams) {
   const webAppButton = {
     ...Markup.button.webApp('FUTBOLIMIZ UZ mini app', getMiniAppUrl()),
     style: 'primary',
     icon_custom_emoji_id: '4974264726604219680'
   };
-  const rows = [
+  const rows = [];
+  if (liveStreams.length) rows.push([{
+    text: '🔴 Jonli Efirlar',
+    callback_data: 'welcome:live_streams',
+    style: 'success'
+  }]);
+  rows.push(
     [webAppButton],
     [{
       text: '📝 Zayafka',
@@ -1460,7 +1466,7 @@ function welcomeMarkup(ctx) {
       style: 'success',
       icon_custom_emoji_id: '5217943819311389632'
     }]
-  ];
+  );
   const bottomRow = [{
     text: 'Yordam',
     callback_data: 'help',
@@ -1475,6 +1481,22 @@ function welcomeMarkup(ctx) {
   });
   rows.push(bottomRow);
   return Markup.inlineKeyboard(rows).reply_markup;
+}
+
+function liveStreamsKeyboard(streams = soccerLiveStreams) {
+  const rows = streams.map((stream) => {
+    const title = Array.from(stream.title || 'Jonli efir').slice(0, 60).join('');
+    return [Markup.button.webApp(`🔴 ${title}`, getMiniAppLiveStreamUrl(stream.id))];
+  });
+  rows.push([Markup.button.callback('⬅️ Start menyusiga qaytish', 'welcome:back')]);
+  return Markup.inlineKeyboard(rows).reply_markup;
+}
+
+function liveStreamsMessage(streams = soccerLiveStreams) {
+  if (!streams.length) {
+    return 'Hozirda jonli efir mavjud emas.';
+  }
+  return '<b>🔴 Jonli efirlar</b>\n\nTomosha qilish uchun quyidagi efirlardan birini tanlang:';
 }
 
 function welcomeApplicationsMessage() {
@@ -3469,6 +3491,14 @@ bot.action('welcome:back', async (ctx) => {
   return ctx.editMessageText(welcomeMessage(ctx), replyOptions(welcomeMarkup(ctx)));
 });
 
+bot.action('welcome:live_streams', async (ctx) => {
+  await ctx.answerCbQuery();
+  return ctx.editMessageText(
+    liveStreamsMessage(),
+    replyOptions(liveStreamsKeyboard())
+  );
+});
+
 bot.action('welcome:required_list', async (ctx) => {
   await ctx.answerCbQuery();
   return showJoinRequestChats(ctx);
@@ -3850,6 +3880,8 @@ module.exports = {
   welcomeApplicationsMessage,
   welcomeApplicationsMarkup,
   welcomeMarkup,
+  liveStreamsKeyboard,
+  liveStreamsMessage,
   soccerLeagues,
   verifyMiniAppInitData
 };

@@ -20,6 +20,9 @@ const {
   normalizeSoccerEvent,
   normalizeSoccerMatchDetails,
   normalizeSoccerStandings,
+  liveStreamsKeyboard,
+  liveStreamsMessage,
+  welcomeMarkup,
   soccerLeagues
 } = require('./bot');
 
@@ -498,6 +501,34 @@ test('creates a Mini App link that directly opens the live stream', () => {
   assert.equal(url.pathname, '/mini-app/');
   assert.equal(url.searchParams.get('stream'), 'live');
   assert.equal(url.searchParams.get('streamId'), 'live-stream-id-1234');
+});
+
+test('adds active streams first in the welcome menu and links each stream directly', () => {
+  const streams = [
+    { id: 'welcome-stream-id-1234', title: 'Final match' },
+    { id: 'welcome-stream-id-5678', title: 'Second match' }
+  ];
+  const welcomeButtons = welcomeMarkup({ from: { id: 123 } }, streams).inline_keyboard;
+  const streamButtons = liveStreamsKeyboard(streams).inline_keyboard;
+
+  assert.equal(welcomeButtons[0][0].text, '🔴 Jonli Efirlar');
+  assert.equal(welcomeButtons[0][0].callback_data, 'welcome:live_streams');
+  assert.equal(liveStreamsMessage(streams).includes('Jonli efirlar'), true);
+  assert.equal(streamButtons[0][0].text, '🔴 Final match');
+  assert.equal(
+    streamButtons[0][0].web_app.url,
+    getMiniAppLiveStreamUrl('welcome-stream-id-1234')
+  );
+  assert.equal(
+    streamButtons[1][0].web_app.url,
+    getMiniAppLiveStreamUrl('welcome-stream-id-5678')
+  );
+  assert.equal(streamButtons[2][0].callback_data, 'welcome:back');
+  assert.equal(
+    welcomeMarkup({ from: { id: 123 } }, []).inline_keyboard[0][0].text,
+    'FUTBOLIMIZ UZ mini app'
+  );
+  assert.equal(liveStreamsMessage([]), 'Hozirda jonli efir mavjud emas.');
 });
 
 test('creates a Mini App link targeting the requested match and Tashkent date', () => {
