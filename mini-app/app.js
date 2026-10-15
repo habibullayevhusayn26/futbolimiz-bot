@@ -23,6 +23,8 @@
   let currentEvents = [];
   let standingsRequestId = 0;
   let refreshTimer;
+  const requestedMatchId = new URLSearchParams(window.location.search).get('match');
+  const requestedMatchDate = new URLSearchParams(window.location.search).get('date');
 
   function localDateString(date) {
     const year = date.getFullYear();
@@ -279,6 +281,7 @@
   function eventMarkup(event) {
     const card = document.createElement('article');
     card.className = `match-card${event.state === 'in' ? ' live' : ''}`;
+    card.dataset.eventId = event.id;
     const heading = document.createElement('div');
     heading.className = 'league-heading';
     heading.innerHTML = `<span>${escapeHtml(event.leagueName)}</span>`;
@@ -335,7 +338,22 @@
       return;
     }
 
-    for (const event of filteredEvents) list.append(eventMarkup(event));
+    for (const event of filteredEvents) {
+      const card = eventMarkup(event);
+      if (requestedMatchId && event.id === requestedMatchId) {
+        card.classList.add('selected-match');
+      }
+      list.append(card);
+    }
+    if (requestedMatchId) {
+      const target = [...list.querySelectorAll('.match-card')]
+        .find((card) => card.dataset.eventId === requestedMatchId);
+      if (target) {
+        window.requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+      } else {
+        setMessage('Tanlangan o‘yin ro‘yxatda topilmadi. O‘yin yakunlangan yoki hozircha yangilanmagan bo‘lishi mumkin.', 'warning');
+      }
+    }
   }
 
   function escapeHtml(value) {
@@ -355,7 +373,9 @@
     loadScoreboard();
   }
 
-  dateInput.value = tashkentDateString(new Date());
+  dateInput.value = /^\d{4}-\d{2}-\d{2}$/.test(requestedMatchDate || '')
+    ? requestedMatchDate
+    : tashkentDateString(new Date());
   document.querySelectorAll('.view-tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       selectedView = tab.dataset.view;

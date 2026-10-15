@@ -4,7 +4,9 @@ const {
   app,
   fetchSoccerScoreboard,
   fetchSoccerStandings,
+  getMatchMiniAppUrl,
   getMiniAppUrl,
+  findNextScheduledSoccerMatch,
   isValidScoreboardDate,
   normalizeSoccerEvent,
   normalizeSoccerStandings,
@@ -215,4 +217,37 @@ test('serves the embedded Mini App and its scoreboard API', async (t) => {
 
 test('uses the configured public origin with the embedded app path', () => {
   assert.match(getMiniAppUrl(), /^https:\/\/.+\/mini-app\/$/);
+});
+
+test('creates a Mini App link targeting the requested match and Tashkent date', () => {
+  const url = new URL(getMatchMiniAppUrl({
+    id: 'match-123',
+    startTime: '2026-10-15T19:30:00Z'
+  }));
+
+  assert.equal(url.pathname, '/mini-app/');
+  assert.equal(url.searchParams.get('match'), 'match-123');
+  assert.equal(url.searchParams.get('date'), '2026-10-16');
+});
+
+test('selects the nearest upcoming scheduled match for a private notification test', () => {
+  const now = Date.parse('2026-10-15T12:00:00Z');
+  const upcoming = {
+    id: 'next-match',
+    state: 'pre',
+    startTime: '2026-10-16T12:00:00Z'
+  };
+  const later = {
+    id: 'later-match',
+    state: 'pre',
+    startTime: '2026-10-16T15:00:00Z'
+  };
+
+  assert.equal(findNextScheduledSoccerMatch([
+    { id: 'live-match', state: 'in', startTime: '2026-10-15T12:30:00Z' },
+    later,
+    { id: 'past-match', state: 'pre', startTime: '2026-10-15T11:00:00Z' },
+    upcoming
+  ], now), upcoming);
+  assert.equal(findNextScheduledSoccerMatch([], now), null);
 });

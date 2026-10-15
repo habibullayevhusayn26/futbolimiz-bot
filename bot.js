@@ -90,6 +90,14 @@ const miniAppVisitSchema = new mongoose.Schema({
 }, { versionKey: false });
 miniAppVisitSchema.index({ telegramId: 1, visitedAt: -1 });
 
+const soccerMatchNotificationSchema = new mongoose.Schema({
+  eventKey: { type: String, unique: true, required: true },
+  deliveredUserIds: { type: [Number], default: [] },
+  blockedUserIds: { type: [Number], default: [] },
+  completed: { type: Boolean, default: false },
+  updatedAt: { type: Date, default: Date.now }
+}, { versionKey: false });
+
 const botConfigSchema = new mongoose.Schema({
   configKey: { type: String, default: 'main_config', unique: true },
   channels: { type: Array, default: [] },
@@ -106,6 +114,8 @@ const JoinRequestChat = mongoose.models.JoinRequestChat || mongoose.model('JoinR
 const PendingJoinRequest = mongoose.models.PendingJoinRequest || mongoose.model('PendingJoinRequest', pendingJoinRequestSchema);
 const JoinRequestLinkCode = mongoose.models.JoinRequestLinkCode || mongoose.model('JoinRequestLinkCode', joinRequestLinkCodeSchema);
 const MiniAppVisit = mongoose.models.MiniAppVisit || mongoose.model('MiniAppVisit', miniAppVisitSchema);
+const SoccerMatchNotification = mongoose.models.SoccerMatchNotification ||
+  mongoose.model('SoccerMatchNotification', soccerMatchNotificationSchema);
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -153,7 +163,10 @@ const soccerStandingsCache = new Map();
 const soccerStandingsRequests = new Map();
 const scoreboardCacheTtlMs = 30_000;
 const standingsCacheTtlMs = 5 * 60_000;
+const soccerMatchNotificationPollMs = 30_000;
 const scoreboardDatePattern = /^\d{8}$/;
+let soccerMatchNotificationTimer;
+let soccerMatchNotificationPollRunning = false;
 
 function isValidScoreboardDate(date) {
   if (!scoreboardDatePattern.test(date)) return false;
@@ -389,6 +402,156 @@ function fetchSoccerScoreboard(date, fetchImpl = fetch) {
     .finally(() => soccerScoreboardRequests.delete(date));
   soccerScoreboardRequests.set(date, request);
   return request;
+}
+
+function getTashkentScoreboardDate(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tashkent',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${values.year}${values.month}${values.day}`;
+}
+
+function getMatchMiniAppUrl(event) {
+  if (!event?.id || !event?.startTime || !Number.isFinite(Date.parse(event.startTime))) {
+    throw new Error('Match ID and valid start time are required to build a Mini App link.');
+  }
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tashkent',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date(event.startTime));
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  const url = new URL(getMiniAppUrl());
+  url.searchParams.set('match', String(event.id));
+  url.searchParams.set('date', `${values.year}-${values.month}-${values.day}`);
+  return url.toString();
+}
+
+function findNextScheduledSoccerMatch(events, now = Date.now()) {
+  return events
+    .filter((event) => event.state === 'pre' && event.startTime &&
+      Number.isFinite(Date.parse(event.startTime)) && Date.parse(event.startTime) > now)
+    .sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime))[0] || null;
+}
+
+function formattedMatchTime(value) {
+  return new Intl.DateTimeFormat('uz-UZ', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Tashkent'
+  }).format(new Date(value));
+}
+
+async function notifyStartedSoccerMatches(events) {
+  const startedEvents = events.filter((event) =>
+    event.state === 'in' && event.id && event.leagueId &&
+    event.home?.name && event.away?.name
+  );
+  if (!startedEvents.length) return;
+  const users = await User.find({}, { telegramId: 1 }).lean();
+  if (!users.length) return;
+
+  for (const event of startedEvents) {
+    const eventKey = `${event.leagueId}:${event.id}`;
+    const text = [
+      `🔴 <b>O‘yin boshlandi!</b>`,
+      ``,
+      `<b>${escapeHtml(event.home.name)} — ${escapeHtml(event.away.name)}</b>`,
+      `${escapeHtml(event.leagueName)} · ${escapeHtml(event.status || 'Jonli efir')}`,
+      `Hisob: ${escapeHtml(event.home.score || '0')} : ${escapeHtml(event.away.score || '0')}`
+    ].join('\n');
+    const replyMarkup = Markup.inlineKeyboard([[
+      Markup.button.webApp('⚽ O‘yin ma’lumotlari', getMatchMiniAppUrl(event))
+    ]]).reply_markup;
+
+    let notification;
+    try {
+      notification = await SoccerMatchNotification.findOneAndUpdate(
+        { eventKey },
+        { $setOnInsert: { eventKey } },
+        { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+      ).lean();
+    } catch (error) {
+      if (error.code === 11000) {
+        notification = await SoccerMatchNotification.findOne({ eventKey }).lean();
+      } else {
+        throw error;
+      }
+    }
+    if (!notification) throw new Error(`Could not load live match notification record ${eventKey}.`);
+    if (notification.completed) continue;
+
+    const deliveredUserIds = new Set(notification.deliveredUserIds || []);
+    const blockedUserIds = new Set(notification.blockedUserIds || []);
+    let deliveredThisPass = 0;
+    let failedThisPass = 0;
+    for (const user of users) {
+      if (deliveredUserIds.has(user.telegramId) || blockedUserIds.has(user.telegramId)) continue;
+      try {
+        await bot.telegram.sendMessage(user.telegramId, text, {
+          parse_mode: 'HTML',
+          protect_content: true,
+          reply_markup: replyMarkup
+        });
+        await SoccerMatchNotification.updateOne(
+          { eventKey },
+          { $addToSet: { deliveredUserIds: user.telegramId }, $set: { updatedAt: new Date() } }
+        );
+        deliveredUserIds.add(user.telegramId);
+        deliveredThisPass += 1;
+      } catch (error) {
+        failedThisPass += 1;
+        if ([400, 403].includes(error.response?.error_code)) {
+          await SoccerMatchNotification.updateOne(
+            { eventKey },
+            { $addToSet: { blockedUserIds: user.telegramId }, $set: { updatedAt: new Date() } }
+          );
+          blockedUserIds.add(user.telegramId);
+        }
+        console.error(`Live match notification ${eventKey} to ${user.telegramId} failed:`, error.response?.description || error.message);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    const completed = users.every((user) =>
+      deliveredUserIds.has(user.telegramId) || blockedUserIds.has(user.telegramId)
+    );
+    if (completed) {
+      await SoccerMatchNotification.updateOne(
+        { eventKey },
+        { $set: { completed: true, updatedAt: new Date() } }
+      );
+    }
+    console.log(`Live match notification ${eventKey}: delivered=${deliveredThisPass}, failed=${failedThisPass}, complete=${completed}`);
+  }
+}
+
+async function pollStartedSoccerMatches() {
+  if (soccerMatchNotificationPollRunning) return;
+  soccerMatchNotificationPollRunning = true;
+  try {
+    const scoreboard = await fetchSoccerScoreboard(getTashkentScoreboardDate());
+    await notifyStartedSoccerMatches(scoreboard.events);
+  } catch (error) {
+    console.error('Live match notification polling failed:', error.message);
+  } finally {
+    soccerMatchNotificationPollRunning = false;
+  }
+}
+
+function startSoccerMatchNotificationPolling() {
+  if (soccerMatchNotificationTimer) return;
+  void pollStartedSoccerMatches();
+  soccerMatchNotificationTimer = setInterval(
+    () => void pollStartedSoccerMatches(),
+    soccerMatchNotificationPollMs
+  );
+  soccerMatchNotificationTimer.unref?.();
 }
 
 app.get('/api/mini-app/scoreboard', async (req, res) => {
@@ -770,6 +933,9 @@ function adminKeyboard(ctx) {
   ]);
   if (can('broadcast')) rows.push([
     { ...Markup.button.callback('📣 Xabar yuborish', 'admin:broadcast'), style: 'primary' }
+  ]);
+  if (isOwner(ctx || {})) rows.push([
+    { ...Markup.button.callback('🧪 Jonli xabarni sinash', 'admin:live_test'), style: 'primary' }
   ]);
   if (can('settings')) {
     rows.push([{ ...Markup.button.callback('➕ Obuna kanalini qo\'shish', 'admin:subscription'), style: 'success' }]);
@@ -2358,6 +2524,48 @@ bot.action('admin:stats', async (ctx) => {
   return adminStats(ctx);
 });
 
+bot.action('admin:live_test', async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isOwner(ctx)) return ctx.reply('Jonli xabar sinovini faqat asosiy admin ishlata oladi.');
+
+  try {
+    const today = getTashkentScoreboardDate();
+    const tomorrow = getTashkentScoreboardDate(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    const results = await Promise.allSettled([
+      fetchSoccerScoreboard(today),
+      fetchSoccerScoreboard(tomorrow)
+    ]);
+    const events = results
+      .filter((result) => result.status === 'fulfilled')
+      .flatMap((result) => result.value.events);
+    const event = findNextScheduledSoccerMatch(events);
+    if (!event) {
+      const failed = results.some((result) => result.status === 'rejected');
+      return ctx.reply(failed
+        ? 'Yaqin o‘yinlarni yuklab bo‘lmadi. Birozdan keyin qayta urinib ko‘ring.'
+        : 'Keyingi 24 soat ichida boshlanadigan o‘yin topilmadi.');
+    }
+
+    const text = [
+      `🧪 <b>TEST — jonli o‘yin xabari</b>`,
+      ``,
+      `<b>${escapeHtml(event.home.name)} — ${escapeHtml(event.away.name)}</b>`,
+      `${escapeHtml(event.leagueName)} · ${formattedMatchTime(event.startTime)}`,
+      `Bu sinov xabari faqat sizga yuborildi.`
+    ].join('\n');
+    await ctx.telegram.sendMessage(ctx.from.id, text, {
+      parse_mode: 'HTML',
+      reply_markup: Markup.inlineKeyboard([[
+        Markup.button.webApp('⚽ O‘yin ma’lumotlari', getMatchMiniAppUrl(event))
+      ]]).reply_markup
+    });
+    return ctx.reply('Sinov xabari yuborildi. Undagi tugma orqali Mini App’da o‘yin kartasini tekshiring.');
+  } catch (error) {
+    console.error('Live match notification test failed:', error.response?.description || error.message);
+    return ctx.reply('Sinov xabarini yuborib bo‘lmadi. Xatolik qayd etildi, keyinroq qayta urinib ko‘ring.');
+  }
+});
+
 bot.action('admin:panel', async (ctx) => {
   await ctx.answerCbQuery();
   if (!isAdmin(ctx)) return ctx.reply('Ruxsat yo\'q.');
@@ -2848,6 +3056,7 @@ async function startBot() {
   await mongoose.connect(config.mongoUri, {
     serverSelectionTimeoutMS: 10000
   });
+  await SoccerMatchNotification.init();
 
   const server = app.listen(port, '0.0.0.0', () => {
     console.log(`Express server ${port} portda ishlayapti.`);
@@ -2858,6 +3067,7 @@ async function startBot() {
   await bot.launch({
     allowedUpdates: ['message', 'channel_post', 'callback_query', 'chat_join_request', 'my_chat_member']
   });
+  startSoccerMatchNotificationPolling();
   console.log('Movie bot ishga tushdi.');
 
   return server;
@@ -2877,6 +3087,8 @@ module.exports = {
   fetchSoccerScoreboard,
   fetchSoccerStandings,
   getMiniAppUrl,
+  getMatchMiniAppUrl,
+  findNextScheduledSoccerMatch,
   editCallbackMessage,
   isValidScoreboardDate,
   mainMenuCommands,
@@ -2888,5 +3100,13 @@ module.exports = {
   verifyMiniAppInitData
 };
 
-process.once('SIGINT', async () => { bot.stop('SIGINT'); await mongoose.disconnect(); });
-process.once('SIGTERM', async () => { bot.stop('SIGTERM'); await mongoose.disconnect(); });
+process.once('SIGINT', async () => {
+  clearInterval(soccerMatchNotificationTimer);
+  bot.stop('SIGINT');
+  await mongoose.disconnect();
+});
+process.once('SIGTERM', async () => {
+  clearInterval(soccerMatchNotificationTimer);
+  bot.stop('SIGTERM');
+  await mongoose.disconnect();
+});
