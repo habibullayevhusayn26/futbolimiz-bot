@@ -55,12 +55,13 @@ button {
   margin-bottom: 20px;
 }
 
-.eyebrow {
-  margin: 0 0 5px;
-  color: #1976d2;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: .16em;
+.brand-logo {
+  display: block;
+  width: min(100%, 640px);
+  height: auto;
+  margin: 0 0 4px;
+  object-fit: contain;
+  object-position: left center;
 }
 
 h1 {
@@ -216,16 +217,9 @@ h1 {
   letter-spacing: .04em;
 }
 
-.standings-scroll {
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-color: #d6e1ed transparent;
-  scrollbar-width: thin;
-}
-
 .standings-table {
   width: 100%;
-  min-width: 590px;
+  table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
   font-variant-numeric: tabular-nums;
@@ -245,24 +239,44 @@ h1 {
 
 .standings-table thead th:first-child,
 .standings-table tbody .rank-cell {
-  width: 35px;
-  padding-left: 11px;
+  width: 25px;
+  padding-left: 7px;
   color: #8b98a8;
   text-align: left;
 }
 
 .standings-table .team-column {
-  width: 35%;
-  min-width: 150px;
   text-align: left;
+}
+
+.standings-table .played-column,
+.standings-table .played-cell,
+.standings-table .wins-column,
+.standings-table .wins-cell,
+.standings-table .losses-column,
+.standings-table .losses-cell,
+.standings-table .draws-column,
+.standings-table .draws-cell {
+  width: 25px;
+}
+
+.standings-table .goals-column,
+.standings-table .goals-cell {
+  width: 44px;
+}
+
+.standings-table .points-column,
+.standings-table .points-cell {
+  width: 32px;
 }
 
 .standings-table tbody th,
 .standings-table tbody td {
-  height: 42px;
+  height: 43px;
+  padding: 3px 1px;
   border-bottom: 1px solid #f0f3f7;
   color: #465466;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   text-align: center;
   white-space: nowrap;
@@ -279,28 +293,31 @@ h1 {
 }
 
 .standings-table tbody .team-column {
-  padding-right: 8px;
+  overflow: hidden;
+  padding-right: 3px;
 }
 
 .standing-team {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
   color: #273648;
+  font-size: 10px;
   font-weight: 730;
 }
 
 .standing-team img {
-  width: 21px;
-  height: 21px;
-  flex: 0 0 21px;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
   object-fit: contain;
 }
 
 .standing-team > span {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .standings-table .points-column,
@@ -309,35 +326,50 @@ h1 {
   font-weight: 850;
 }
 
-.form-dots {
-  display: inline-flex;
-  justify-content: center;
-  gap: 3px;
-}
+@media (max-width: 380px) {
+  .standings-table .rank-column,
+  .standings-table tbody .rank-cell {
+    width: 21px;
+    padding-left: 5px;
+  }
 
-.form-dot {
-  display: grid;
-  width: 17px;
-  height: 17px;
-  place-items: center;
-  border-radius: 6px;
-  font-size: 8px;
-  font-weight: 850;
-}
+  .standings-table .played-column,
+  .standings-table .played-cell,
+  .standings-table .wins-column,
+  .standings-table .wins-cell,
+  .standings-table .losses-column,
+  .standings-table .losses-cell,
+  .standings-table .draws-column,
+  .standings-table .draws-cell {
+    width: 21px;
+  }
 
-.form-dot.w {
-  background: #e6f6ed;
-  color: #22844d;
-}
+  .standings-table .goals-column,
+  .standings-table .goals-cell {
+    width: 39px;
+  }
 
-.form-dot.d {
-  background: #f0f2f5;
-  color: #77818d;
-}
+  .standings-table .points-column,
+  .standings-table .points-cell {
+    width: 28px;
+  }
 
-.form-dot.l {
-  background: #fff0f0;
-  color: #c94b52;
+  .standing-team {
+    gap: 3px;
+    font-size: 9px;
+  }
+
+  .standing-team img {
+    width: 15px;
+    height: 15px;
+    flex-basis: 15px;
+  }
+
+  .standings-table tbody th,
+  .standings-table tbody td {
+    font-size: 9px;
+  }
+
 }
 
 .standings-empty {

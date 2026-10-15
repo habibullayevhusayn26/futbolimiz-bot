@@ -203,13 +203,11 @@
         empty.textContent = 'Hozircha o‘ynalgan uchrashuvlar yo‘q.';
         section.append(empty);
       } else {
-        const scroll = document.createElement('div');
-        scroll.className = 'standings-scroll';
         const standingsTable = document.createElement('table');
         standingsTable.className = 'standings-table';
         standingsTable.setAttribute('aria-label', `${table.leagueName} turnir jadvali`);
         const header = document.createElement('thead');
-        header.innerHTML = '<tr><th scope="col">#</th><th scope="col" class="team-column">JAMOA</th><th scope="col">O‘</th><th scope="col">G</th><th scope="col">D</th><th scope="col">M</th><th scope="col">TG</th><th scope="col">O‘G</th><th scope="col">+/−</th><th scope="col" class="points-column">OCHKO</th><th scope="col">FORMA</th></tr>';
+        header.innerHTML = '<tr><th scope="col" class="rank-column">#</th><th scope="col" class="team-column">JAMOA</th><th scope="col" class="played-column" title="O‘yinlar soni">O‘</th><th scope="col" class="wins-column" title="G‘alabalar soni">G‘</th><th scope="col" class="losses-column" title="Mag‘lubiyatlar soni">M</th><th scope="col" class="draws-column" title="Durranglar soni">D</th><th scope="col" class="goals-column" title="To‘plar nisbati: urilgan va o‘tkazilgan">T:N</th><th scope="col" class="points-column" title="Ochkolari">OCH</th></tr>';
         const body = document.createElement('tbody');
         for (const team of table.teams) {
           const row = document.createElement('tr');
@@ -234,40 +232,34 @@
           teamCell.append(teamName);
           name.append(teamCell);
           row.append(rank, name);
-          for (const value of [
-            team.played,
-            team.wins,
-            team.draws,
-            team.losses,
-            team.goalsFor,
-            team.goalsAgainst,
-            team.goalDifference > 0 ? `+${team.goalDifference}` : String(team.goalDifference)
-          ]) {
-            const cell = document.createElement('td');
-            cell.textContent = String(value);
-            row.append(cell);
-          }
+          const played = document.createElement('td');
+          played.className = 'played-cell';
+          played.textContent = String(team.played);
+          row.append(played);
+          const wins = document.createElement('td');
+          wins.className = 'wins-cell';
+          wins.textContent = String(team.wins);
+          row.append(wins);
+          const losses = document.createElement('td');
+          losses.className = 'losses-cell';
+          losses.textContent = String(team.losses);
+          row.append(losses);
+          const draws = document.createElement('td');
+          draws.className = 'draws-cell';
+          draws.textContent = String(team.draws);
+          row.append(draws);
+          const goals = document.createElement('td');
+          goals.className = 'goals-cell';
+          goals.textContent = `${team.goalsFor}:${team.goalsAgainst}`;
+          row.append(goals);
           const points = document.createElement('td');
           points.className = 'points-cell';
           points.textContent = String(team.points);
           row.append(points);
-          const form = document.createElement('td');
-          form.className = 'form-cell';
-          const formDots = document.createElement('span');
-          formDots.className = 'form-dots';
-          for (const result of team.form) {
-            const dot = document.createElement('span');
-            dot.className = `form-dot ${result.toLowerCase()}`;
-            dot.textContent = result;
-            formDots.append(dot);
-          }
-          form.append(formDots);
-          row.append(form);
           body.append(row);
         }
         standingsTable.append(header, body);
-        scroll.append(standingsTable);
-        section.append(scroll);
+        section.append(standingsTable);
       }
       list.append(section);
     }

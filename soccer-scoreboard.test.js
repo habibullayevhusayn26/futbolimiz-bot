@@ -198,7 +198,14 @@ test('serves the embedded Mini App and its scoreboard API', async (t) => {
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const page = await fetch(`${baseUrl}/mini-app/`);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /Futbol olami/);
+  const html = await page.text();
+  assert.match(html, /class="brand-logo"/);
+  assert.match(html, /alt="Futbolimiz UZ logotipi"/);
+  assert.match(html, /rel="icon" type="image\/png" href="\/mini-app\/logo\.png"/);
+
+  const logo = await fetch(`${baseUrl}/mini-app/logo.png`);
+  assert.equal(logo.status, 200);
+  assert.match(logo.headers.get('content-type'), /image\/png/);
 
   const invalidDate = await fetch(`${baseUrl}/api/mini-app/scoreboard?date=20260230`);
   assert.equal(invalidDate.status, 400);
