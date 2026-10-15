@@ -780,21 +780,54 @@ h1 {
 
 .profile-view {
   display: grid;
-  gap: 14px;
+  gap: 16px;
   padding-bottom: 20px;
 }
 
 .profile-topline {
   display: grid;
-  grid-template-columns: 38px 1fr 38px;
+  grid-template-columns: 38px 38px 1fr 38px;
   align-items: center;
   gap: 10px;
   margin-bottom: 4px;
 }
 
 .profile-topline h1 {
+  grid-column: 3 / 5;
   font-size: 18px;
   text-align: center;
+}
+
+#profile-content {
+  display: grid;
+  gap: 18px;
+}
+
+.profile-theme-button {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.profile-theme-button svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.profile-theme-button:active {
+  transform: scale(.94);
 }
 
 .profile-card,
@@ -935,27 +968,6 @@ h1 {
 .profile-info-row strong {
   overflow-wrap: anywhere;
   text-align: right;
-}
-
-.profile-theme-control {
-  display: flex;
-  min-height: 44px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.profile-theme-control select {
-  max-width: 62%;
-  min-height: 36px;
-  padding: 0 30px 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface-raised);
-  color: var(--text);
-  font-size: 11px;
 }
 
 .profile-section-heading {
@@ -2173,11 +2185,10 @@ html[data-theme="dark"] .profile-note {
   color: #aab6c6;
 }
 
-html[data-theme="dark"] .profile-theme-control select {
+html[data-theme="dark"] .profile-theme-button {
   border-color: var(--line);
   background: #202a38;
   color: var(--text);
-  color-scheme: dark;
 }
 
 html[data-theme="dark"] .profile-empty-list,

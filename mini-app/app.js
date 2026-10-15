@@ -25,6 +25,7 @@
   const profileView = document.getElementById('profile-view');
   const profileContent = document.getElementById('profile-content');
   const profileBackButton = document.getElementById('profile-back-button');
+  const profileThemeButton = document.getElementById('profile-theme-button');
   let selectedFilter = 'all';
   let selectedLeague = 'all';
   let selectedView = 'matches';
@@ -83,6 +84,28 @@
     applyTheme();
   }
 
+  function updateProfileThemeButton() {
+    const themes = {
+      auto: {
+        label: 'Avto',
+        icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>'
+      },
+      light: {
+        label: 'Kunduzgi',
+        icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>'
+      },
+      dark: {
+        label: 'Tungi',
+        icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 14.2A8.5 8.5 0 0 1 9.8 3.2 8.7 8.7 0 1 0 20.8 14.2Z"/></svg>'
+      }
+    };
+    const theme = themes[themePreference];
+    profileThemeButton.innerHTML = theme.icon;
+    profileThemeButton.setAttribute('aria-label', `Mavzu: ${theme.label}. Keyingisiga o‘zgartirish`);
+    profileThemeButton.title = `Mavzu: ${theme.label}`;
+  }
+
+  updateProfileThemeButton();
   applyTheme();
   telegram?.onEvent?.('themeChanged', applyTheme);
   window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
@@ -931,17 +954,6 @@
         <div class="profile-info-row"><span>Til</span><strong>O‘zbekcha</strong></div>
       </section>
       <section class="profile-section">
-        <div class="profile-section-heading"><h2>Mavzu</h2></div>
-        <label class="profile-theme-control" for="profile-theme">
-          <span>Ilova ko‘rinishi</span>
-          <select id="profile-theme" aria-label="Ilova mavzusini tanlash">
-            <option value="auto">Avto (Telegramdagidek)</option>
-            <option value="light">Kunduzgi</option>
-            <option value="dark">Tungi</option>
-          </select>
-        </label>
-      </section>
-      <section class="profile-section">
         <div class="profile-section-heading"><h2>Sevimli klublar</h2><span>${teams.length}</span></div>
         ${teams.length ? `<ul class="profile-list">${teams.map((team) => `<li class="profile-team-item" data-profile-team-id="${escapeAttribute(team.id)}">
           <img class="profile-team-logo" src="${escapeAttribute(team.logo)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'profile-team-placeholder',textContent:'⚽'}))">
@@ -969,9 +981,7 @@
         placeholder.remove();
       }
     });
-    const themeSelect = profileContent.querySelector('#profile-theme');
-    themeSelect.value = themePreference;
-    themeSelect.addEventListener('change', () => saveThemePreference(themeSelect.value));
+    updateProfileThemeButton();
   }
 
   function openProfile() {
@@ -1106,6 +1116,12 @@
   document.getElementById('refresh-button').addEventListener('click', loadScoreboard);
   profileButton.addEventListener('click', openProfile);
   profileBackButton.addEventListener('click', goBackFromProfile);
+  profileThemeButton.addEventListener('click', () => {
+    const themes = ['auto', 'light', 'dark'];
+    const nextTheme = themes[(themes.indexOf(themePreference) + 1) % themes.length];
+    saveThemePreference(nextTheme);
+    updateProfileThemeButton();
+  });
   detailBackButton.addEventListener('click', goBackFromDetail);
   detailCloseButton.addEventListener('click', goBackFromDetail);
   telegram?.BackButton?.onClick?.(() => {
