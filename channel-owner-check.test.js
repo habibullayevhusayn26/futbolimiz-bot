@@ -1,15 +1,19 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { checkFullAdmin } = require('./bot');
+const { checkFullAdmin, createRequiredChatPickerKeyboard } = require('./bot');
 
-function createContext({ userStatus = 'creator', botStatus = 'administrator' } = {}) {
+function createContext({
+  userStatus = 'creator',
+  botStatus = 'administrator',
+  chatType = 'channel'
+} = {}) {
   const calls = [];
   const ctx = {
     from: { id: 123 },
     telegram: {
       getChat: async (chatId) => {
         calls.push(['getChat', chatId]);
-        return { id: -1001234567890, type: 'channel', title: 'Private channel', username: '' };
+        return { id: -1001234567890, type: chatType, title: 'Private channel', username: '' };
       },
       getChatMember: async (chatId, userId) => {
         calls.push(['getChatMember', chatId, userId]);
@@ -35,6 +39,7 @@ test('accepts a private channel ID and creates an invite link for subscribers', 
     id: -1001234567890,
     title: 'Private channel',
     username: '',
+    type: 'channel',
     inviteLink: 'https://t.me/+private-invite'
   });
   assert.deepEqual(calls[0], ['getChat', -1001234567890]);
@@ -49,4 +54,25 @@ test('requires the user adding the channel to be its owner or administrator', as
     /kanalda admin yoki ega/
   );
   assert.equal(calls.some(([method]) => method === 'createChatInviteLink'), false);
+});
+
+test('supports adding a private group as a required subscription chat', async () => {
+  const { ctx } = createContext({ chatType: 'supergroup' });
+  const chat = await checkFullAdmin(ctx, '-1001234567890');
+
+  assert.equal(chat.type, 'supergroup');
+  assert.equal(chat.inviteLink, 'https://t.me/+private-invite');
+});
+
+test('offers Telegram chat selection buttons that request bot admin rights', () => {
+  const keyboard = createRequiredChatPickerKeyboard(11, 22);
+
+  assert.equal(keyboard.keyboard[0][0].request_chat.chat_is_channel, true);
+  assert.deepEqual(keyboard.keyboard[0][0].request_chat.bot_administrator_rights, {
+    can_manage_chat: true,
+    can_post_messages: true,
+    can_invite_users: true
+  });
+  assert.equal(keyboard.keyboard[1][0].request_chat.chat_is_channel, false);
+  assert.equal(keyboard.keyboard[1][0].request_chat.bot_administrator_rights.can_invite_users, true);
 });

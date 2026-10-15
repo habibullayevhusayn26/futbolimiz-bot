@@ -618,7 +618,9 @@ async function checkFullAdmin(ctx, username) {
   }
   const normalizedUsername = isChatId ? '' : normalizeChannel(channelInput);
   const chat = await ctx.telegram.getChat(isChatId ? chatId : normalizedUsername);
-  if (!chat || chat.type !== 'channel') throw new Error('Bu username kanalga tegishli emas.');
+  if (!chat || !['channel', 'group', 'supergroup'].includes(chat.type)) {
+    throw new Error('Faqat kanal yoki guruhni majburiy obunaga qo\'shish mumkin.');
+  }
 
   const userMember = await ctx.telegram.getChatMember(chat.id, ctx.from.id);
   if (!userMember || !['creator', 'administrator'].includes(userMember.status)) {
@@ -630,14 +632,14 @@ async function checkFullAdmin(ctx, username) {
   if (!member || !['creator', 'administrator'].includes(member.status)) {
     throw new Error('Bot kanalida administrator bo\'lishi kerak.');
   }
-  if (member.status === 'administrator' && member.can_post_messages === false) {
+  if (chat.type === 'channel' && member.status === 'administrator' && member.can_post_messages === false) {
     throw new Error('Botga kanalda post yuborish huquqini bering.');
   }
 
   let inviteLink = '';
   if (!chat.username) {
     if (member.status !== 'creator' && member.can_invite_users !== true) {
-      throw new Error('Maxfiy kanalga obuna havolasi yaratish uchun botga foydalanuvchilarni taklif qilish huquqini bering.');
+      throw new Error('Obuna havolasi yaratish uchun botga foydalanuvchilarni taklif qilish huquqini bering.');
     }
     const invite = await ctx.telegram.createChatInviteLink(chat.id);
     inviteLink = invite.invite_link;
@@ -647,27 +649,99 @@ async function checkFullAdmin(ctx, username) {
     id: chat.id,
     title: chat.title || normalizedUsername || String(chat.id),
     username: chat.username ? `@${chat.username}` : '',
+    type: chat.type,
     ...(inviteLink ? { inviteLink } : {})
   };
 }
 
-async function handlePrivateRequiredChannelUpdate(ctx, update) {
-  const requesterId = Number(update?.from?.id);
-  const expiresAt = pendingRequiredChannelAdds.get(requesterId);
-  if (!expiresAt) return false;
-  if (expiresAt <= Date.now()) {
-    pendingRequiredChannelAdds.delete(requesterId);
-    return false;
+function createRequiredChatRequestButton(text, requestId, chatIsChannel) {
+  const botAdministratorRights = chatIsChannel
+    ? { can_manage_chat: true, can_post_messages: true, can_invite_users: true }
+    : { can_manage_chat: true, can_delete_messages: true, can_invite_users: true };
+  return {
+    text,
+    request_chat: {
+      request_id: requestId,
+      chat_is_channel: chatIsChannel,
+      bot_is_member: false,
+      bot_administrator_rights: botAdministratorRights,
+      request_title: true,
+      request_username: true
+    }
+  };
+}
+
+function createRequiredChatPickerKeyboard(channelRequestId, groupRequestId) {
+  return {
+    keyboard: [
+      [createRequiredChatRequestButton('📢 Kanal tanlash', channelRequestId, true)],
+      [createRequiredChatRequestButton('👥 Guruh tanlash', groupRequestId, false)],
+      [{ text: '❌ Bekor qilish' }]
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: true,
+    input_field_placeholder: 'Kanal yoki guruhni tanlang'
+  };
+}
+
+function clearRequiredChatRequests(userId) {
+  for (const [requestId, request] of pendingRequiredChannelAdds) {
+    if (request.userId === userId) pendingRequiredChannelAdds.delete(requestId);
+  }
+}
+
+async function startRequiredChatPicker(ctx) {
+  const userId = Number(ctx.from.id);
+  clearRequiredChatRequests(userId);
+
+  let channelRequestId;
+  let groupRequestId;
+  do {
+    channelRequestId = crypto.randomInt(1, 2_147_483_647);
+  } while (pendingRequiredChannelAdds.has(channelRequestId));
+  pendingRequiredChannelAdds.set(channelRequestId, {
+    userId,
+    expiresAt: Date.now() + 10 * 60 * 1000
+  });
+  do {
+    groupRequestId = crypto.randomInt(1, 2_147_483_647);
+  } while (groupRequestId === channelRequestId || pendingRequiredChannelAdds.has(groupRequestId));
+  pendingRequiredChannelAdds.set(groupRequestId, {
+    userId,
+    expiresAt: Date.now() + 10 * 60 * 1000
+  });
+
+  await ctx.telegram.sendMessage(
+    ctx.chat.id,
+    'Kanal yoki guruhni tanlang. Telegram botni tanlangan joyga admin qilish huquqlarini so\'raydi.',
+    { reply_markup: createRequiredChatPickerKeyboard(channelRequestId, groupRequestId) }
+  );
+}
+
+async function handleSharedRequiredChat(ctx, sharedChat) {
+  const requesterId = Number(ctx.from?.id);
+  const request = pendingRequiredChannelAdds.get(sharedChat.request_id);
+  if (!request || request.userId !== requesterId) return;
+  if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) {
+    clearRequiredChatRequests(requesterId);
+    await ctx.telegram.sendMessage(requesterId, 'Ruxsat yo\'q.', {
+      reply_markup: { remove_keyboard: true }
+    });
+    return;
+  }
+  if (request.expiresAt <= Date.now()) {
+    clearRequiredChatRequests(requesterId);
+    await ctx.telegram.sendMessage(requesterId, 'Tanlash muddati tugadi. Admin paneldan qaytadan boshlang.', {
+      reply_markup: { remove_keyboard: true }
+    });
+    return;
   }
 
-  const chat = update.chat;
-  const member = update.new_chat_member;
-  if (chat?.type !== 'channel' || !['creator', 'administrator'].includes(member?.status)) return false;
-
+  clearRequiredChatRequests(requesterId);
   try {
     const channel = await checkFullAdmin(
-      { telegram: ctx.telegram, from: update.from },
-      chat.id
+      { telegram: ctx.telegram, from: ctx.from },
+      sharedChat.chat_id
     );
     if (!data.settings.requiredChannels.some((item) => item.id === channel.id)) {
       const currentChannels = data.settings.requiredChannels;
@@ -679,19 +753,19 @@ async function handlePrivateRequiredChannelUpdate(ctx, update) {
         throw error;
       }
     }
-    pendingRequiredChannelAdds.delete(requesterId);
     await ctx.telegram.sendMessage(
       requesterId,
-      `✅ “${channel.title}” majburiy obuna kanaliga qo'shildi.`
+      `✅ “${channel.title}” majburiy obuna ${['group', 'supergroup'].includes(channel.type) ? 'guruhi' : 'kanali'} sifatida qo'shildi.`,
+      { reply_markup: { remove_keyboard: true } }
     );
   } catch (error) {
-    console.error(`Private required channel setup failed for ${chat.id}:`, error.response?.description || error.message);
+    console.error(`Required chat setup failed for ${sharedChat.chat_id}:`, error.response?.description || error.message);
     await ctx.telegram.sendMessage(
       requesterId,
-      `Kanalni qo'shib bo'lmadi: ${error.message || 'xatolik yuz berdi'}. Bot kanal administratori ekanini va foydalanuvchilarni taklif qilish huquqi borligini tekshiring.`
+      `Chatni qo'shib bo'lmadi: ${error.message || 'xatolik yuz berdi'}. Bot tanlangan chatda admin ekanini tekshiring.`,
+      { reply_markup: { remove_keyboard: true } }
     );
   }
-  return true;
 }
 
 async function saveSettings() {
@@ -1044,7 +1118,6 @@ bot.on('channel_post', handleChannelLinkCommand);
 bot.on('my_chat_member', async (ctx) => {
   const update = ctx.myChatMember;
   const chatId = update?.chat.id;
-  if (await handlePrivateRequiredChannelUpdate(ctx, update)) return;
   if (!chatId || !joinRequestChatIds.has(String(chatId))) return;
 
   const member = update.new_chat_member;
@@ -2093,9 +2166,9 @@ bot.action('admin:subscription', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply('Ruxsat yo\'q.');
   ctx.session = { step: 'required_subscription_channel', adminPanelActive: true };
   return ctx.reply(
-    'Ochiq kanal uchun username yuboring (masalan, @my_channel). Maxfiy kanalni ID kiritmasdan ulash uchun quyidagi tugmani bosing:',
+    'Ochiq kanal uchun username yuboring (masalan, @my_channel). Kanal yoki guruhni ro\'yxatdan tanlab, botni avtomatik admin qilish uchun quyidagi tugmani bosing:',
     Markup.inlineKeyboard([
-      [Markup.button.callback('🔒 Maxfiy kanalni ID siz ulash', 'admin:subscription_private')],
+      [Markup.button.callback('📢 Kanal yoki guruh tanlash', 'admin:subscription_private')],
       [Markup.button.callback('❌ Bekor qilish', 'admin:subscription_private_cancel')]
     ])
   );
@@ -2106,9 +2179,9 @@ bot.action('welcome:required_add', async (ctx) => {
   if (!isOwner(ctx)) return ctx.reply('Faqat asosiy admin bu amalni bajarishi mumkin.');
   ctx.session = { step: 'required_subscription_channel', adminPanelActive: true };
   return ctx.reply(
-    'Ochiq kanal uchun username yuboring (masalan, @my_channel). Maxfiy kanalni ID kiritmasdan ulash uchun quyidagi tugmani bosing:',
+    'Ochiq kanal uchun username yuboring (masalan, @my_channel). Kanal yoki guruhni ro\'yxatdan tanlab, botni avtomatik admin qilish uchun quyidagi tugmani bosing:',
     Markup.inlineKeyboard([
-      [Markup.button.callback('🔒 Maxfiy kanalni ID siz ulash', 'admin:subscription_private')],
+      [Markup.button.callback('📢 Kanal yoki guruh tanlash', 'admin:subscription_private')],
       [Markup.button.callback('❌ Bekor qilish', 'admin:subscription_private_cancel')]
     ])
   );
@@ -2118,26 +2191,18 @@ bot.action('admin:subscription_private', async (ctx) => {
   await ctx.answerCbQuery();
   if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) return ctx.reply('Ruxsat yo\'q.');
   if (ctx.chat?.type !== 'private') {
-    return ctx.reply('Maxfiy kanalni ulashni botning shaxsiy chatida boshlang.');
+    return ctx.reply('Kanal yoki guruh tanlashni botning shaxsiy chatida boshlang.');
   }
-  pendingRequiredChannelAdds.set(Number(ctx.from.id), Date.now() + 10 * 60 * 1000);
   ctx.session = { adminPanelActive: true };
-  return ctx.reply(
-    '10 daqiqa ichida maxfiy kanalingizga botni administrator qilib qo\'shing. ' +
-    'Botga kanalga xabar yuborish va foydalanuvchilarni taklif qilish huquqlarini bering. ' +
-    'Bot qo\'shilgan kanalni o\'zi aniqlab, majburiy obunaga ulaydi.',
-    Markup.inlineKeyboard([[
-      Markup.button.callback('❌ Bekor qilish', 'admin:subscription_private_cancel')
-    ]])
-  );
+  return startRequiredChatPicker(ctx);
 });
 
 bot.action('admin:subscription_private_cancel', async (ctx) => {
   await ctx.answerCbQuery();
   if (!isAdmin(ctx)) return ctx.reply('Ruxsat yo\'q.');
-  pendingRequiredChannelAdds.delete(Number(ctx.from.id));
+  clearRequiredChatRequests(Number(ctx.from.id));
   ctx.session = { adminPanelActive: true };
-  return ctx.reply('Maxfiy kanalni ulash bekor qilindi.', adminKeyboard(ctx));
+  return ctx.reply('Kanal/guruh tanlash bekor qilindi.', adminKeyboard(ctx));
 });
 
 bot.action('welcome:join_chat_connect', async (ctx) => {
@@ -2208,10 +2273,26 @@ bot.on('animation', async (ctx) => {
   return ctx.reply('Media uchun izoh yuboring:');
 });
 
+bot.on('message', async (ctx, next) => {
+  const sharedChat = ctx.message.chat_shared;
+  if (!sharedChat) return next();
+  return handleSharedRequiredChat(ctx, sharedChat);
+});
+
 bot.on('text', async (ctx) => {
   const rawText = ctx.message.text;
   const value = rawText.trim();
   const step = ctx.session?.step;
+  if (value === '❌ Bekor qilish' && pendingRequiredChannelAdds.size) {
+    const userId = Number(ctx.from?.id);
+    if ([...pendingRequiredChannelAdds.values()].some((request) => request.userId === userId)) {
+      clearRequiredChatRequests(userId);
+      ctx.session = { adminPanelActive: true };
+      return ctx.telegram.sendMessage(userId, 'Kanal/guruh tanlash bekor qilindi.', {
+        reply_markup: { remove_keyboard: true }
+      });
+    }
+  }
   if (step === 'join_welcome_text') {
     if (value.toLowerCase() === '/cancel') {
       reset(ctx);
@@ -2417,7 +2498,12 @@ if (require.main === module) {
   });
 }
 
-module.exports = { checkFullAdmin, editCallbackMessage, verifyMiniAppInitData };
+module.exports = {
+  checkFullAdmin,
+  createRequiredChatPickerKeyboard,
+  editCallbackMessage,
+  verifyMiniAppInitData
+};
 
 process.once('SIGINT', async () => { bot.stop('SIGINT'); await mongoose.disconnect(); });
 process.once('SIGTERM', async () => { bot.stop('SIGTERM'); await mongoose.disconnect(); });
