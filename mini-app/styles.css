@@ -393,11 +393,16 @@ h1 {
   display: none;
 }
 
-.stream-player:fullscreen {
+.stream-player:fullscreen,
+.stream-player.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
   width: 100vw;
   height: 100vh;
-  max-height: 100vh;
   height: 100dvh;
+  max-width: none;
+  max-height: 100vh;
   max-height: 100dvh;
   aspect-ratio: auto;
   border: 0;
@@ -405,12 +410,28 @@ h1 {
   background: #060908;
 }
 
-.stream-player:fullscreen .stream-stage {
+.stream-player:fullscreen .stream-stage,
+.stream-player.is-fullscreen .stream-stage {
   flex: 1 1 auto;
 }
 
-.stream-player:fullscreen .stream-controls {
+.stream-player:fullscreen .stream-controls,
+.stream-player.is-fullscreen .stream-controls {
   padding: 10px max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+}
+
+.stream-player:fullscreen .stream-player-status,
+.stream-player.is-fullscreen .stream-player-status {
+  position: absolute;
+  right: 12px;
+  bottom: 64px;
+  left: 12px;
+  z-index: 2;
+  color: #fff;
+}
+
+body.stream-fullscreen-open {
+  overflow: hidden;
 }
 
 .stream-player-status {

@@ -52,6 +52,8 @@
   let youtubePlayerState = -1;
   let liveViewerId = '';
   let fullscreenChangeHandler = null;
+  let telegramFullscreenFailureHandler = null;
+  let fullscreenKeydownHandler = null;
   let favoriteTeamIds = new Set();
   let favoriteMatchIds = new Set();
   let favoriteMatchDetails = new Map();
@@ -362,9 +364,30 @@
     window.clearInterval(viewerHeartbeatTimer);
     viewerHeartbeatTimer = null;
     livePlayerControls = null;
+    const telegramWebApp = window.Telegram?.WebApp;
+    if (telegramWebApp?.isFullscreen &&
+        telegramWebApp.exitFullscreen &&
+        telegramWebApp.isVersionAtLeast?.('8.0')) {
+      try {
+        telegramWebApp.exitFullscreen();
+      } catch (error) {
+        console.warn('Telegram Mini App fullscreen could not be closed:', error);
+      }
+    }
+    document.body.classList.remove('stream-fullscreen-open');
     if (fullscreenChangeHandler) {
       document.removeEventListener('fullscreenchange', fullscreenChangeHandler);
+      document.removeEventListener('webkitfullscreenchange', fullscreenChangeHandler);
+      window.Telegram?.WebApp?.offEvent?.('fullscreenChanged', fullscreenChangeHandler);
       fullscreenChangeHandler = null;
+    }
+    if (telegramFullscreenFailureHandler) {
+      window.Telegram?.WebApp?.offEvent?.('fullscreenFailed', telegramFullscreenFailureHandler);
+      telegramFullscreenFailureHandler = null;
+    }
+    if (fullscreenKeydownHandler) {
+      document.removeEventListener('keydown', fullscreenKeydownHandler);
+      fullscreenKeydownHandler = null;
     }
     if (activeHlsPlayer) {
       activeHlsPlayer.destroy();
@@ -604,32 +627,71 @@
         soundButton.setAttribute('aria-label', muted ? 'Ovozni o‘chirish' : 'Ovozni yoqish');
       });
     }
-    fullscreenButton.addEventListener('click', async () => {
-      try {
-        if (document.fullscreenElement === player) {
-          await document.exitFullscreen();
-        } else if (player.requestFullscreen) {
-          await player.requestFullscreen();
-        } else if (video?.webkitEnterFullscreen) {
-          video.webkitEnterFullscreen();
-        } else {
-          setPlayerMessage('Bu qurilmada katta ekran rejimi mavjud emas.');
-        }
-      } catch (error) {
-        if (video?.webkitEnterFullscreen) {
-          video.webkitEnterFullscreen();
-          return;
-        }
-        console.warn('Live stream fullscreen could not be opened:', error);
-        setPlayerMessage('Katta ekran rejimini ochib bo‘lmadi.');
-      }
-    });
-    fullscreenChangeHandler = () => {
-      const fullscreen = document.fullscreenElement === player;
+    const updateFullscreenState = (fullscreen) => {
+      player.classList.toggle('is-fullscreen', fullscreen);
+      document.body.classList.toggle('stream-fullscreen-open', fullscreen);
       fullscreenButton.innerHTML = `<span class="stream-fullscreen-icon${fullscreen ? ' exit' : ''}" aria-hidden="true"></span><span>${fullscreen ? 'Yopish' : 'Katta ekran'}</span>`;
       fullscreenButton.setAttribute('aria-label', fullscreen ? 'Katta ekran rejimidan chiqish' : 'Katta ekranda ko‘rish');
     };
+    fullscreenButton.addEventListener('click', async () => {
+      const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
+      const telegramWebApp = window.Telegram?.WebApp;
+      const isFullscreen = fullscreenElement === player || telegramWebApp?.isFullscreen || player.classList.contains('is-fullscreen');
+      try {
+        if (isFullscreen) {
+          if (telegramWebApp?.isFullscreen &&
+              telegramWebApp.exitFullscreen &&
+              telegramWebApp.isVersionAtLeast?.('8.0')) {
+            telegramWebApp.exitFullscreen();
+            updateFullscreenState(false);
+          } else if (document.fullscreenElement === player) {
+            await document.exitFullscreen();
+          } else if (document.webkitFullscreenElement === player && document.webkitExitFullscreen) {
+            await document.webkitExitFullscreen();
+          } else {
+            updateFullscreenState(false);
+          }
+        } else if (telegramWebApp?.requestFullscreen && telegramWebApp.isVersionAtLeast?.('8.0')) {
+          telegramWebApp.requestFullscreen();
+          updateFullscreenState(true);
+        } else if (player.requestFullscreen) {
+          await player.requestFullscreen();
+          updateFullscreenState(true);
+        } else if (player.webkitRequestFullscreen) {
+          player.webkitRequestFullscreen();
+          updateFullscreenState(true);
+        } else {
+          updateFullscreenState(true);
+        }
+      } catch (error) {
+        console.warn('Live stream fullscreen could not be opened:', error);
+        updateFullscreenState(true);
+      }
+    });
+    fullscreenChangeHandler = () => {
+      const fullscreen = document.fullscreenElement === player ||
+        document.webkitFullscreenElement === player ||
+        window.Telegram?.WebApp?.isFullscreen === true;
+      updateFullscreenState(fullscreen);
+    };
     document.addEventListener('fullscreenchange', fullscreenChangeHandler);
+    document.addEventListener('webkitfullscreenchange', fullscreenChangeHandler);
+    if (window.Telegram?.WebApp?.onEvent &&
+        window.Telegram.WebApp.isVersionAtLeast?.('8.0')) {
+      window.Telegram.WebApp.onEvent('fullscreenChanged', fullscreenChangeHandler);
+      telegramFullscreenFailureHandler = () => {
+        console.warn('Telegram Mini App fullscreen could not be opened.');
+        updateFullscreenState(true);
+      };
+      window.Telegram.WebApp.onEvent('fullscreenFailed', telegramFullscreenFailureHandler);
+    }
+    fullscreenKeydownHandler = (event) => {
+      if (event.key === 'Escape' && player.classList.contains('is-fullscreen') &&
+          document.fullscreenElement !== player && document.webkitFullscreenElement !== player) {
+        updateFullscreenState(false);
+      }
+    };
+    document.addEventListener('keydown', fullscreenKeydownHandler);
     player.append(status);
     liveStreamView.append(player);
     if (stream.match) {
