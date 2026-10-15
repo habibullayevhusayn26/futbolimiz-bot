@@ -937,6 +937,27 @@ h1 {
   text-align: right;
 }
 
+.profile-theme-control {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.profile-theme-control select {
+  max-width: 62%;
+  min-height: 36px;
+  padding: 0 30px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 11px;
+}
+
 .profile-section-heading {
   display: flex;
   align-items: center;
@@ -1003,6 +1024,10 @@ h1 {
   border-radius: 50%;
   background: #f3f6fa;
   object-fit: contain;
+}
+
+.profile-team-logo {
+  filter: drop-shadow(0 0 1px #fff) drop-shadow(0 1px 2px rgba(20, 30, 45, .18));
 }
 
 .profile-team-placeholder {
@@ -1998,6 +2023,292 @@ h1 {
 #match-date:focus-visible {
   outline: 3px solid rgba(25, 118, 210, .24);
   outline-offset: 2px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #10151e;
+  --surface: #171f2b;
+  --surface-raised: #202a38;
+  --text: #edf2f8;
+  --muted: #a3afbf;
+  --accent: #4c9beb;
+  --accent-text: #071522;
+  --line: rgba(216, 228, 244, .14);
+}
+
+html[data-theme="dark"] body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+html[data-theme="dark"] .profile-button,
+html[data-theme="dark"] .refresh-button,
+html[data-theme="dark"] .detail-back-button,
+html[data-theme="dark"] .detail-close-button {
+  border-color: rgba(227, 237, 249, .2);
+  background: #1c2634;
+  color: #edf4fc;
+}
+
+html[data-theme="dark"] .brand-logo {
+  filter: drop-shadow(0 0 1px #fff) drop-shadow(0 2px 5px rgba(0, 0, 0, .75));
+}
+
+html[data-theme="dark"] .view-tabs,
+html[data-theme="dark"] .filter-tabs,
+html[data-theme="dark"] .detail-tabs {
+  border-color: var(--line);
+  background: rgba(28, 39, 53, .88);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .2);
+}
+
+html[data-theme="dark"] .view-tab,
+html[data-theme="dark"] .detail-tab,
+html[data-theme="dark"] .filter-tab {
+  color: #aebbd0;
+}
+
+html[data-theme="dark"] .view-tab.active,
+html[data-theme="dark"] .detail-tab.active {
+  border-color: rgba(230, 239, 250, .16);
+  background: linear-gradient(145deg, #34445a, #25364a);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .24), inset 0 1px 0 rgba(255, 255, 255, .08);
+  color: #b9dcff;
+}
+
+html[data-theme="dark"] .filter-tab.active {
+  background: var(--accent);
+  color: #071522;
+}
+
+html[data-theme="dark"] .standings-card,
+html[data-theme="dark"] .match-card,
+html[data-theme="dark"] .profile-card,
+html[data-theme="dark"] .profile-section,
+html[data-theme="dark"] .detail-section {
+  border-color: var(--line);
+  background: var(--surface);
+  box-shadow: 0 5px 17px rgba(0, 0, 0, .2);
+}
+
+html[data-theme="dark"] .standings-card {
+  background: linear-gradient(155deg, #1a2431, #151e29);
+}
+
+html[data-theme="dark"] .standings-heading {
+  border-color: var(--line);
+}
+
+html[data-theme="dark"] .standings-heading > span,
+html[data-theme="dark"] .profile-section-heading > span {
+  background: #263b53;
+  color: #b9dcff;
+}
+
+html[data-theme="dark"] .standings-table thead th {
+  border-color: var(--line);
+  background: #202b39;
+  color: #a6b3c4;
+}
+
+html[data-theme="dark"] .standings-table tbody th,
+html[data-theme="dark"] .standings-table tbody td {
+  border-color: var(--line);
+  color: #d1dae6;
+}
+
+html[data-theme="dark"] .standing-team,
+html[data-theme="dark"] .league-heading,
+html[data-theme="dark"] .detail-league,
+html[data-theme="dark"] .detail-score,
+html[data-theme="dark"] .event-detail strong,
+html[data-theme="dark"] .event-neutral strong {
+  color: #e7edf5;
+}
+
+html[data-theme="dark"] .standings-table .points-column,
+html[data-theme="dark"] .standings-table .points-cell,
+html[data-theme="dark"] .standings-table tbody tr:first-child .rank-cell {
+  color: #91c9ff;
+}
+
+html[data-theme="dark"] .match-card.selected-match {
+  border-color: rgba(96, 171, 244, .58);
+  box-shadow: 0 0 0 3px rgba(76, 155, 235, .16), 0 8px 24px rgba(0, 0, 0, .25);
+}
+
+html[data-theme="dark"] .notify-toggle {
+  border-color: rgba(219, 231, 246, .2);
+  background: #263243;
+  color: #bdc9d8;
+}
+
+html[data-theme="dark"] .notify-toggle.active {
+  border-color: rgba(104, 178, 246, .48);
+  background: #203b56;
+  color: #83c3ff;
+}
+
+html[data-theme="dark"] .team-logo,
+html[data-theme="dark"] .standing-team img,
+html[data-theme="dark"] .detail-team img {
+  filter: drop-shadow(0 0 1.2px #fff) drop-shadow(0 1px 2px rgba(0, 0, 0, .7));
+}
+
+html[data-theme="dark"] .profile-team-logo {
+  background: #f8fbff;
+  filter: drop-shadow(0 0 1.5px #fff) drop-shadow(0 1px 3px rgba(0, 0, 0, .72));
+}
+
+html[data-theme="dark"] .profile-info-row,
+html[data-theme="dark"] .profile-list li,
+html[data-theme="dark"] .match-stat {
+  border-color: var(--line);
+}
+
+html[data-theme="dark"] .profile-info-row span,
+html[data-theme="dark"] .profile-data-message,
+html[data-theme="dark"] .profile-note {
+  color: #aab6c6;
+}
+
+html[data-theme="dark"] .profile-theme-control select {
+  border-color: var(--line);
+  background: #202a38;
+  color: var(--text);
+  color-scheme: dark;
+}
+
+html[data-theme="dark"] .profile-empty-list,
+html[data-theme="dark"] .profile-empty,
+html[data-theme="dark"] .detail-empty {
+  background: #202a38;
+  color: #b2bece;
+}
+
+html[data-theme="dark"] .team-placeholder,
+html[data-theme="dark"] .detail-team-placeholder {
+  background: #263243;
+  color: #e5edf7;
+}
+
+html[data-theme="dark"] .detail-live-badge,
+html[data-theme="dark"] .detail-tabs,
+html[data-theme="dark"] .possession-bar {
+  border-color: var(--line);
+  background-color: #202a38;
+  color: #c0ccda;
+}
+
+html[data-theme="dark"] .detail-live-badge.live,
+html[data-theme="dark"] .detail-status.live,
+html[data-theme="dark"] .match-state.live {
+  color: #ff8794;
+}
+
+html[data-theme="dark"] .detail-live-badge.live {
+  border-color: rgba(255, 135, 148, .35);
+  background: rgba(220, 53, 69, .16);
+}
+
+html[data-theme="dark"] .detail-error {
+  border-color: rgba(255, 120, 130, .3);
+  background: #351f29;
+  color: #ffb5bd;
+}
+
+html[data-theme="dark"] .event-marker {
+  border-color: var(--line);
+}
+
+html[data-theme="dark"] .stat-values span,
+html[data-theme="dark"] .detail-possession > div:first-child {
+  color: #adbacb;
+}
+
+html[data-theme="dark"] .stat-bar {
+  background: #303c4b;
+}
+
+html[data-theme="dark"] .stat-bar i:last-child {
+  background: #758398;
+}
+
+html[data-theme="dark"] .league-select-wrap {
+  border-color: var(--line);
+  background: linear-gradient(135deg, #1b2634, #17212e);
+}
+
+html[data-theme="dark"] .league-filter-icon,
+html[data-theme="dark"] .league-filter-count,
+html[data-theme="dark"] .league-options {
+  border-color: var(--line);
+  background: #202b39;
+}
+
+html[data-theme="dark"] .league-filter-icon {
+  color: #9bceff;
+}
+
+html[data-theme="dark"] .league-filter-caption,
+html[data-theme="dark"] .league-filter-chevron {
+  color: #a9b8ca;
+}
+
+html[data-theme="dark"] .league-filter-trigger,
+html[data-theme="dark"] .league-option {
+  color: #e1e9f3;
+}
+
+html[data-theme="dark"] .league-option:hover,
+html[data-theme="dark"] .league-option:focus-visible,
+html[data-theme="dark"] .league-option.selected {
+  background: #2b4057;
+  color: #b9dcff;
+}
+
+html[data-theme="dark"] .league-option-mark {
+  border-color: var(--line);
+  background: #273446;
+  color: #9bceff;
+}
+
+html[data-theme="dark"] .league-option.selected .league-option-mark {
+  background: var(--accent);
+  color: #071522;
+}
+
+html[data-theme="dark"] .refresh-button,
+html[data-theme="dark"] .date-step,
+html[data-theme="dark"] .today-button,
+html[data-theme="dark"] .filter-tab {
+  border-color: rgba(219, 231, 246, .18);
+  background: linear-gradient(145deg, #273648, #1c2938);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, .22), inset 0 1px 0 rgba(255, 255, 255, .06);
+  color: #a8d4ff;
+}
+
+html[data-theme="dark"] .today-button {
+  color: #a8d4ff;
+}
+
+html[data-theme="dark"] #match-date {
+  border-color: var(--line);
+  background: #202a38;
+  color: var(--text);
+  color-scheme: dark;
+}
+
+html[data-theme="dark"] .skeleton {
+  background: linear-gradient(100deg, #1c2633 20%, #2b3746 40%, #1c2633 60%);
+  background-size: 200% 100%;
+}
+
+html[data-theme="dark"] .footer,
+html[data-theme="dark"] .profile-info-row,
+html[data-theme="dark"] .detail-venue {
+  color: #aab6c6;
 }
 
 @keyframes profile-banner-shimmer {

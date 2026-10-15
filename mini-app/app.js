@@ -2,8 +2,6 @@
   const telegram = window.Telegram?.WebApp;
   telegram?.ready();
   telegram?.expand();
-  telegram?.setHeaderColor?.('#ffffff');
-  telegram?.setBackgroundColor?.('#ffffff');
 
   const list = document.getElementById('match-list');
   const statusMessage = document.getElementById('status-message');
@@ -36,6 +34,8 @@
   let refreshTimer;
   let favoriteTeamIds = new Set();
   let favoriteMatchIds = new Set();
+  let favoriteMatchDetails = new Map();
+  let themePreference = loadThemePreference();
   const requestedMatchDate = new URLSearchParams(window.location.search).get('date');
   const requestedProfile = new URLSearchParams(window.location.search).get('profile') === '1';
   let activeDetailId = null;
@@ -45,6 +45,49 @@
   const knownTeamDetails = new Map();
   let profileTeamDetailsLoading = false;
   let profileTeamDetailsError = '';
+
+  function loadThemePreference() {
+    try {
+      const saved = window.localStorage.getItem('futbolimiz-theme');
+      return ['auto', 'light', 'dark'].includes(saved) ? saved : 'auto';
+    } catch (error) {
+      console.warn('Theme preference could not be loaded:', error);
+      return 'auto';
+    }
+  }
+
+  function resolvedTheme() {
+    if (themePreference !== 'auto') return themePreference;
+    if (telegram?.colorScheme === 'dark') return 'dark';
+    if (telegram?.colorScheme === 'light') return 'light';
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+
+  function applyTheme() {
+    const theme = resolvedTheme();
+    document.documentElement.dataset.theme = theme;
+    telegram?.setHeaderColor?.(theme === 'dark' ? '#10151e' : '#ffffff');
+    telegram?.setBackgroundColor?.(theme === 'dark' ? '#10151e' : '#ffffff');
+    const themeColor = document.querySelector('meta[name="theme-color"]');
+    if (themeColor) themeColor.content = theme === 'dark' ? '#10151e' : '#ffffff';
+  }
+
+  function saveThemePreference(value) {
+    if (!['auto', 'light', 'dark'].includes(value)) return;
+    themePreference = value;
+    try {
+      window.localStorage.setItem('futbolimiz-theme', value);
+    } catch (error) {
+      console.warn('Theme preference could not be saved:', error);
+    }
+    applyTheme();
+  }
+
+  applyTheme();
+  telegram?.onEvent?.('themeChanged', applyTheme);
+  window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
+    if (themePreference === 'auto' && telegram?.colorScheme !== 'dark') applyTheme();
+  });
 
   function localDateString(date) {
     const year = date.getFullYear();
@@ -114,6 +157,7 @@
       if (!response.ok) throw new Error(payload.error || 'Bildirishnoma sozlamalarini yuklab bo‘lmadi.');
       favoriteTeamIds = new Set(payload.favoriteTeamIds);
       favoriteMatchIds = new Set(payload.favoriteMatchIds);
+      favoriteMatchDetails = new Map((payload.favoriteMatches || []).map((match) => [String(match.id), match]));
       if (profileOpen) {
         renderProfile();
         loadProfileTeamDetails();
@@ -127,7 +171,7 @@
     }
   }
 
-  function notificationButton(kind, id, label) {
+  function notificationButton(kind, id, label, eventDetails = null) {
     if (!telegram?.initData || !id) return null;
     const enabled = (kind === 'team' ? favoriteTeamIds : favoriteMatchIds).has(id);
     const button = document.createElement('button');
@@ -139,11 +183,11 @@
     button.setAttribute('aria-pressed', String(enabled));
     button.title = enabled ? 'Bildirishnoma yoqilgan' : 'Bildirishnoma yoqish';
     button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>';
-    button.addEventListener('click', () => toggleNotificationPreference(button, kind, id, label));
+    button.addEventListener('click', () => toggleNotificationPreference(button, kind, id, label, eventDetails));
     return button;
   }
 
-  async function toggleNotificationPreference(button, kind, id, label) {
+  async function toggleNotificationPreference(button, kind, id, label, eventDetails = null) {
     if (!telegram?.initData || button.disabled) return;
     const selections = kind === 'team' ? favoriteTeamIds : favoriteMatchIds;
     const enabled = !selections.has(id);
@@ -152,12 +196,20 @@
       const response = await fetch('/api/mini-app/notification-preferences', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'toggle', initData: telegram.initData, kind, id, enabled })
+        body: JSON.stringify({
+          action: 'toggle',
+          initData: telegram.initData,
+          kind,
+          id,
+          enabled,
+          ...(kind === 'match' && enabled && eventDetails ? { eventDetails } : {})
+        })
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'Bildirishnoma sozlamasini saqlab bo‘lmadi.');
       favoriteTeamIds = new Set(payload.favoriteTeamIds);
       favoriteMatchIds = new Set(payload.favoriteMatchIds);
+      favoriteMatchDetails = new Map((payload.favoriteMatches || []).map((match) => [String(match.id), match]));
       if (profileOpen) renderProfile();
       document.querySelectorAll('.notify-toggle').forEach((toggle) => {
         if (toggle.dataset.kind !== kind || toggle.dataset.id !== id) return;
@@ -208,6 +260,7 @@
       if (!response.ok) throw new Error(payload.error || 'O‘yinlarni yuklab bo‘lmadi.');
       currentEvents = payload.events;
       rememberEventNames(currentEvents);
+      if (profileOpen) renderProfile();
       updateLeagues(payload.leagues);
       if (selectedView === 'matches') renderEvents();
       if (activeDetailId) {
@@ -427,7 +480,12 @@
     const leagueName = document.createElement('span');
     leagueName.textContent = event.leagueName;
     heading.append(leagueName);
-    const matchBell = notificationButton('match', event.id, `${event.home.name} — ${event.away.name}`);
+    const matchBell = notificationButton('match', event.id, `${event.home.name} — ${event.away.name}`, {
+      id: String(event.id),
+      homeName: event.home.name,
+      awayName: event.away.name,
+      leagueName: event.leagueName
+    });
     if (matchBell) heading.append(matchBell);
     card.append(heading);
 
@@ -849,9 +907,14 @@
     });
     const matches = [...favoriteMatchIds].map((id) => {
       const event = currentEvents.find((item) => item.id === id);
+      const savedDetails = favoriteMatchDetails.get(String(id));
       return {
         id,
-        name: event ? `${event.home.name} — ${event.away.name}` : `O‘yin ID: ${id}`,
+        name: event
+          ? `${event.home.name} — ${event.away.name}`
+          : savedDetails
+            ? `${savedDetails.homeName} — ${savedDetails.awayName}`
+            : 'O‘yin jamoalari ma’lumoti mavjud emas',
         event
       };
     });
@@ -866,6 +929,17 @@
         </div>
         <div class="profile-info-row"><span>Telegram ID</span><strong>${escapeHtml(user.id)}</strong></div>
         <div class="profile-info-row"><span>Til</span><strong>O‘zbekcha</strong></div>
+      </section>
+      <section class="profile-section">
+        <div class="profile-section-heading"><h2>Mavzu</h2></div>
+        <label class="profile-theme-control" for="profile-theme">
+          <span>Ilova ko‘rinishi</span>
+          <select id="profile-theme" aria-label="Ilova mavzusini tanlash">
+            <option value="auto">Avto (Telegramdagidek)</option>
+            <option value="light">Kunduzgi</option>
+            <option value="dark">Tungi</option>
+          </select>
+        </label>
       </section>
       <section class="profile-section">
         <div class="profile-section-heading"><h2>Sevimli klublar</h2><span>${teams.length}</span></div>
@@ -895,6 +969,9 @@
         placeholder.remove();
       }
     });
+    const themeSelect = profileContent.querySelector('#profile-theme');
+    themeSelect.value = themePreference;
+    themeSelect.addEventListener('change', () => saveThemePreference(themeSelect.value));
   }
 
   function openProfile() {

@@ -10,12 +10,20 @@ const { Telegraf, Markup, session } = require('telegraf');
 
 const mongoConnection = mongoose.connection;
 
+const favoriteSoccerMatchDetailSchema = new mongoose.Schema({
+  id: String,
+  homeName: String,
+  awayName: String,
+  leagueName: String
+}, { _id: false });
+
 const userSchema = new mongoose.Schema({
   telegramId: { type: Number, unique: true, required: true, index: true },
   username: { type: String, default: '' },
   nickname: { type: String, default: '' },
   favoriteSoccerTeamIds: { type: [String], default: [] },
   favoriteSoccerMatchIds: { type: [String], default: [] },
+  favoriteSoccerMatchDetails: { type: [favoriteSoccerMatchDetailSchema], default: [] },
   joinedAt: { type: Date, default: Date.now },
   lastActiveAt: { type: Date, default: Date.now }
 }, { versionKey: false });
@@ -867,18 +875,26 @@ app.post('/api/mini-app/notification-preferences', async (req, res) => {
     if (action === 'get') {
       const user = await User.findOne(
         { telegramId: verified.user.id },
-        { favoriteSoccerTeamIds: 1, favoriteSoccerMatchIds: 1 }
+        { favoriteSoccerTeamIds: 1, favoriteSoccerMatchIds: 1, favoriteSoccerMatchDetails: 1 }
       ).lean();
       return res.status(200).json({
         favoriteTeamIds: user?.favoriteSoccerTeamIds || [],
-        favoriteMatchIds: user?.favoriteSoccerMatchIds || []
+        favoriteMatchIds: user?.favoriteSoccerMatchIds || [],
+        favoriteMatches: user?.favoriteSoccerMatchDetails || []
       });
     }
+    const eventDetails = req.body?.kind === 'match' && req.body.enabled ? req.body.eventDetails : null;
     if (action !== 'toggle' ||
         !['team', 'match'].includes(req.body?.kind) ||
         typeof req.body?.id !== 'string' ||
         !/^[a-zA-Z0-9._-]{1,64}$/.test(req.body.id) ||
-        typeof req.body?.enabled !== 'boolean') {
+        typeof req.body?.enabled !== 'boolean' ||
+        (eventDetails && (
+          eventDetails.id !== req.body.id ||
+          ['homeName', 'awayName', 'leagueName'].some((key) =>
+            typeof eventDetails[key] !== 'string' || eventDetails[key].trim().length < 1 || eventDetails[key].length > 100
+          )
+        ))) {
       return res.status(400).json({ ok: false, error: 'Bildirishnoma tanlovi noto‘g‘ri.' });
     }
 
@@ -886,6 +902,17 @@ app.post('/api/mini-app/notification-preferences', async (req, res) => {
     const update = req.body.enabled
       ? { $addToSet: { [field]: req.body.id }, $setOnInsert: { telegramId: verified.user.id } }
       : { $pull: { [field]: req.body.id }, $setOnInsert: { telegramId: verified.user.id } };
+    if (req.body.kind === 'match' && req.body.enabled && eventDetails) {
+      update.$addToSet.favoriteSoccerMatchDetails = {
+        id: req.body.id,
+        homeName: eventDetails.homeName.trim(),
+        awayName: eventDetails.awayName.trim(),
+        leagueName: eventDetails.leagueName.trim()
+      };
+    }
+    if (req.body.kind === 'match' && !req.body.enabled) {
+      update.$pull.favoriteSoccerMatchDetails = { id: req.body.id };
+    }
     const user = await User.findOneAndUpdate(
       { telegramId: verified.user.id },
       update,
@@ -893,7 +920,8 @@ app.post('/api/mini-app/notification-preferences', async (req, res) => {
     ).lean();
     return res.status(200).json({
       favoriteTeamIds: user.favoriteSoccerTeamIds || [],
-      favoriteMatchIds: user.favoriteSoccerMatchIds || []
+      favoriteMatchIds: user.favoriteSoccerMatchIds || [],
+      favoriteMatches: user.favoriteSoccerMatchDetails || []
     });
   } catch (error) {
     console.error('Soccer notification preference update failed:', error);
@@ -1035,7 +1063,7 @@ const premiumEmojis = {
   web: '<tg-emoji emoji-id="5231482153228835967">🌐</tg-emoji>'
 };
 const defaultMessages = {
-  welcome: `${premiumEmojis.welcome} Assalomu alaykum {nickname}\n\n${premiumEmojis.bot} Kanal yoki guruhingizni ulash uchun “Kanal/guruh ulash” tugmasini bosing yoki /connect yuboring, so\'ng chatni tanlang. Boshqarish uchun /mychats buyrug\'ini yuboring.`,
+  welcome: `${premiumEmojis.welcome} Assalomu alaykum {nickname}!\n\n${premiumEmojis.bot} FUTBOLIMIZ UZ botiga xush kelibsiz! Jonli hisoblar, o‘yin tafsilotlari, tarkiblar va statistikalarni Mini App orqali kuzating. Boshlash uchun quyidagi tugmani bosing.`,
   subscriptionRequired: `${premiumEmojis.warning} Botdan foydalanish uchun quyidagi kanallarga obuna bo\'ling`,
   help: `${premiumEmojis.web} Kanal yoki guruhingizni ulash uchun botning Start xabaridagi “Kanal/guruh ulash” tugmasini bosing yoki /connect yuboring, chatni tanlang va Telegram so\'ragan admin huquqlarini tasdiqlang. Chatlaringizni /mychats bilan boshqaring; avtomatik qabulni to\'xtatib, kutilayotgan so\'rovlarni tugma bilan tasdiqlashingiz mumkin.`
 };
@@ -1271,6 +1299,10 @@ function welcomeMarkup(ctx) {
   });
   rows.push(bottomRow);
   return Markup.inlineKeyboard(rows).reply_markup;
+}
+
+function welcomeApplicationsMessage() {
+  return `${premiumEmojis.bot} Kanal yoki guruhingizni ulash uchun “Kanal/guruh ulash” tugmasini bosing yoki /connect yuboring, so‘ng chatni tanlang. Boshqarish uchun /mychats buyrug‘ini yuboring.`;
 }
 
 function welcomeApplicationsMarkup() {
@@ -3053,7 +3085,7 @@ bot.action('welcome:join_chat_connect', async (ctx) => {
 bot.action('welcome:applications', async (ctx) => {
   await ctx.answerCbQuery();
   return ctx.editMessageText(
-    '<b>📝 Zayafka</b>\n\nKanal yoki guruhni ulang yoki avval ulangan chatlaringizni ko‘ring:',
+    `<b>📝 Zayafka</b>\n\n${welcomeApplicationsMessage()}`,
     replyOptions(welcomeApplicationsMarkup())
   );
 });
@@ -3374,6 +3406,8 @@ module.exports = {
   normalizeSoccerStandings,
   openJoinRequestChatPicker,
   registerMainMenuCommands,
+  defaultMessages,
+  welcomeApplicationsMessage,
   welcomeApplicationsMarkup,
   welcomeMarkup,
   soccerLeagues,

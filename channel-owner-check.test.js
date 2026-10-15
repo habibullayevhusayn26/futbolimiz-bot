@@ -3,9 +3,11 @@ const test = require('node:test');
 const {
   checkFullAdmin,
   createRequiredChatPickerKeyboard,
+  defaultMessages,
   mainMenuCommands,
   openJoinRequestChatPicker,
   registerMainMenuCommands,
+  welcomeApplicationsMessage,
   welcomeApplicationsMarkup,
   welcomeMarkup
 } = require('./bot');
@@ -148,4 +150,14 @@ test('places chat connection and linked chat list under the green Zayafka button
   assert.equal(submenu.flat().find((button) => button.callback_data === 'welcome:join_chat_connect').style, 'success');
   assert.equal(submenu.flat().find((button) => button.callback_data === 'welcome:required_list').style, 'success');
   assert.ok(submenu.flat().some((button) => button.callback_data === 'welcome:back'));
+});
+
+test('keeps channel connection instructions in Zayafka and gives Start a football welcome', () => {
+  assert.match(welcomeApplicationsMessage(), /Kanal yoki guruhingizni ulash/);
+  assert.match(welcomeApplicationsMessage(), /\/connect/);
+  assert.match(welcomeApplicationsMessage(), /\/mychats/);
+  assert.match(defaultMessages.welcome, /jonli hisoblar/i);
+  assert.match(defaultMessages.welcome, /o‘yin tafsilotlari/i);
+  assert.doesNotMatch(defaultMessages.welcome, /\/connect|\/mychats/);
+  assert.doesNotMatch(defaultMessages.welcome, /Kanal\/guruh ulash/);
 });
