@@ -19,6 +19,9 @@
       <button class="refresh-button" id="refresh-button" type="button" aria-label="Yangilash">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3L3 11m0 0V5m0 6h6m-5 2a8 8 0 0 0 14.9 3L21 13m0 0v6m0-6h-6"/></svg>
       </button>
+      <button class="profile-button" id="profile-button" type="button" aria-label="Profilni ochish" title="Profil">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+      </button>
     </header>
 
     <div id="dashboard-view">
@@ -90,6 +93,14 @@
         <button class="detail-close-button" id="detail-close-button" type="button" aria-label="O‘yinni yopish">×</button>
       </div>
       <div id="match-detail-content"></div>
+    </section>
+
+    <section class="profile-view" id="profile-view" aria-live="polite" hidden>
+      <div class="profile-topline">
+        <button class="detail-back-button" id="profile-back-button" type="button" aria-label="Asosiy sahifaga qaytish">‹</button>
+        <h1>Profil</h1>
+      </div>
+      <div id="profile-content"></div>
     </section>
   </main>
 </body>

@@ -347,6 +347,8 @@ test('serves the embedded Mini App and its scoreboard API', async (t) => {
   const html = await page.text();
   assert.match(html, /class="brand-logo"/);
   assert.match(html, /alt="Futbolimiz UZ logotipi"/);
+  assert.match(html, /id="profile-button"/);
+  assert.match(html, /id="profile-view"/);
   assert.match(html, /id="notification-hint"/);
   assert.match(html, /rel="icon" type="image\/png" href="\/mini-app\/logo\.png"/);
 

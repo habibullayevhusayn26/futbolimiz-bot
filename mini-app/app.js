@@ -23,6 +23,10 @@
   const detailBackButton = document.getElementById('detail-back-button');
   const detailCloseButton = document.getElementById('detail-close-button');
   const detailLiveBadge = document.getElementById('detail-live-badge');
+  const profileButton = document.getElementById('profile-button');
+  const profileView = document.getElementById('profile-view');
+  const profileContent = document.getElementById('profile-content');
+  const profileBackButton = document.getElementById('profile-back-button');
   let selectedFilter = 'all';
   let selectedLeague = 'all';
   let selectedView = 'matches';
@@ -33,9 +37,12 @@
   let favoriteTeamIds = new Set();
   let favoriteMatchIds = new Set();
   const requestedMatchDate = new URLSearchParams(window.location.search).get('date');
+  const requestedProfile = new URLSearchParams(window.location.search).get('profile') === '1';
   let activeDetailId = null;
   let detailRequestId = 0;
   let activeDetailTab = 'lineups';
+  let profileOpen = false;
+  const knownTeamNames = new Map();
 
   function localDateString(date) {
     const year = date.getFullYear();
@@ -105,6 +112,7 @@
       if (!response.ok) throw new Error(payload.error || 'Bildirishnoma sozlamalarini yuklab bo‘lmadi.');
       favoriteTeamIds = new Set(payload.favoriteTeamIds);
       favoriteMatchIds = new Set(payload.favoriteMatchIds);
+      if (profileOpen) renderProfile();
       updateNotificationHint();
       if (selectedView === 'standings') loadStandings();
       else renderEvents();
@@ -145,6 +153,7 @@
       if (!response.ok) throw new Error(payload.error || 'Bildirishnoma sozlamasini saqlab bo‘lmadi.');
       favoriteTeamIds = new Set(payload.favoriteTeamIds);
       favoriteMatchIds = new Set(payload.favoriteMatchIds);
+      if (profileOpen) renderProfile();
       document.querySelectorAll('.notify-toggle').forEach((toggle) => {
         if (toggle.dataset.kind !== kind || toggle.dataset.id !== id) return;
         const isEnabled = selectionsFor(toggle.dataset.kind).has(id);
@@ -193,6 +202,7 @@
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'O‘yinlarni yuklab bo‘lmadi.');
       currentEvents = payload.events;
+      rememberEventNames(currentEvents);
       updateLeagues(payload.leagues);
       if (selectedView === 'matches') renderEvents();
       if (activeDetailId) {
@@ -296,6 +306,7 @@
     standingsSeason.textContent = `Joriy mavsum · ${tables[0].season}`;
     standingsSeason.hidden = false;
     for (const table of tables) {
+      for (const team of table.teams || []) knownTeamNames.set(String(team.id), team.name);
       const section = document.createElement('section');
       section.className = 'standings-card';
       const heading = document.createElement('div');
@@ -750,6 +761,97 @@
     telegram?.BackButton?.hide?.();
   }
 
+  function rememberEventNames(events) {
+    for (const event of events) {
+      if (event.home?.id) knownTeamNames.set(String(event.home.id), event.home.name);
+      if (event.away?.id) knownTeamNames.set(String(event.away.id), event.away.name);
+    }
+  }
+
+  function profileDisplayName(user) {
+    return [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || 'Telegram foydalanuvchisi';
+  }
+
+  function renderProfile() {
+    const user = telegram?.initDataUnsafe?.user;
+    if (!user || !telegram?.initData) {
+      profileContent.innerHTML = '<div class="profile-empty"><span class="profile-empty-icon">👤</span><strong>Profil ma’lumotlari mavjud emas</strong><span>Shaxsiy profil va bildirishnoma tanlovlarini ko‘rish uchun Mini App’ni Telegram ichidan oching.</span></div>';
+      return;
+    }
+
+    const fullName = profileDisplayName(user);
+    const initials = fullName.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toLocaleUpperCase();
+    const avatar = user.photo_url
+      ? `<img src="${escapeAttribute(user.photo_url)}" alt="" onerror="this.remove()">`
+      : `<span>${escapeHtml(initials || '👤')}</span>`;
+    const teams = [...favoriteTeamIds].map((id) => ({
+      id,
+      name: knownTeamNames.get(String(id)) || `Klub ID: ${id}`
+    }));
+    const matches = [...favoriteMatchIds].map((id) => {
+      const event = currentEvents.find((item) => item.id === id);
+      return {
+        id,
+        name: event ? `${event.home.name} — ${event.away.name}` : `O‘yin ID: ${id}`,
+        event
+      };
+    });
+    profileContent.innerHTML = `
+      <section class="profile-card">
+        <div class="profile-identity">
+          <div class="profile-avatar">${avatar}</div>
+          <div class="profile-name">${escapeHtml(fullName)}</div>
+          ${user.username ? `<div class="profile-username">@${escapeHtml(user.username)}</div>` : ''}
+        </div>
+        <div class="profile-info-row"><span>Telegram ID</span><strong>${escapeHtml(user.id)}</strong></div>
+        <div class="profile-info-row"><span>Til</span><strong>O‘zbekcha</strong></div>
+      </section>
+      <section class="profile-section">
+        <div class="profile-section-heading"><h2>Sevimli klublar</h2><span>${teams.length}</span></div>
+        ${teams.length ? `<ul class="profile-list">${teams.map((team) => `<li><span class="profile-list-icon">🔔</span><span>${escapeHtml(team.name)}</span></li>`).join('')}</ul>`
+          : '<p class="profile-empty-list">Hozircha klub tanlanmagan.</p>'}
+      </section>
+      <section class="profile-section">
+        <div class="profile-section-heading"><h2>Obuna bo‘lgan o‘yinlar</h2><span>${matches.length}</span></div>
+        ${matches.length ? `<ul class="profile-list">${matches.map((match) => `<li><span class="profile-list-icon">⚽</span><span>${escapeHtml(match.name)}</span></li>`).join('')}</ul>`
+          : '<p class="profile-empty-list">Hozircha o‘yinga obuna bo‘linmagan.</p>'}
+      </section>
+      <p class="profile-note">Klub yoki o‘yin bildirishnomalarini istalgan vaqtda qo‘ng‘iroqcha tugmasi orqali yoqib-o‘chirishingiz mumkin.</p>
+    `;
+  }
+
+  function openProfile() {
+    if (activeDetailId) return;
+    profileOpen = true;
+    dashboard.hidden = true;
+    profileView.hidden = false;
+    document.body.classList.add('profile-open');
+    renderProfile();
+    const url = new URL(window.location.href);
+    url.searchParams.set('profile', '1');
+    window.history.pushState({ profileView: true }, '', url);
+    telegram?.BackButton?.show?.();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function closeProfile(updateHistory = true) {
+    profileOpen = false;
+    profileView.hidden = true;
+    dashboard.hidden = false;
+    document.body.classList.remove('profile-open');
+    telegram?.BackButton?.hide?.();
+    if (updateHistory) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('profile');
+      window.history.replaceState({}, '', url);
+    }
+  }
+
+  function goBackFromProfile() {
+    if (window.history.state?.profileView) window.history.back();
+    else closeProfile();
+  }
+
   function goBackFromDetail() {
     if (window.history.state?.matchDetail) window.history.back();
     else {
@@ -847,11 +949,26 @@
     loadScoreboard();
   });
   document.getElementById('refresh-button').addEventListener('click', loadScoreboard);
+  profileButton.addEventListener('click', openProfile);
+  profileBackButton.addEventListener('click', goBackFromProfile);
   detailBackButton.addEventListener('click', goBackFromDetail);
   detailCloseButton.addEventListener('click', goBackFromDetail);
-  telegram?.BackButton?.onClick?.(goBackFromDetail);
+  telegram?.BackButton?.onClick?.(() => {
+    if (activeDetailId) goBackFromDetail();
+    else if (profileOpen) goBackFromProfile();
+  });
   window.addEventListener('popstate', () => {
     const matchId = new URLSearchParams(window.location.search).get('match');
+    const isProfile = new URLSearchParams(window.location.search).get('profile') === '1';
+    if (profileOpen && !isProfile) closeProfile(false);
+    if (isProfile && !profileOpen) {
+      profileOpen = true;
+      dashboard.hidden = true;
+      profileView.hidden = false;
+      document.body.classList.add('profile-open');
+      renderProfile();
+      telegram?.BackButton?.show?.();
+    }
     if (!matchId) {
       if (activeDetailId) closeMatchDetail();
       return;
@@ -870,6 +987,13 @@
     });
   });
 
+  if (requestedProfile) {
+    profileOpen = true;
+    dashboard.hidden = true;
+    profileView.hidden = false;
+    document.body.classList.add('profile-open');
+    renderProfile();
+  }
   recordVisit();
   loadNotificationPreferences();
   loadScoreboard();
