@@ -257,6 +257,52 @@ h1 {
   height: 14px;
 }
 
+.stream-choices {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 1px 5px;
+  scrollbar-width: thin;
+}
+
+.stream-choice {
+  display: flex;
+  min-width: 120px;
+  max-width: 220px;
+  min-height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.stream-choice.active {
+  border-color: rgba(31, 145, 88, .35);
+  background: #eff8f2;
+  color: #147447;
+}
+
+.stream-choice-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stream-choice-viewers {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 7px;
+  background: rgba(31, 145, 88, .1);
+  font-variant-numeric: tabular-nums;
+}
+
 .stream-player {
   position: relative;
   display: flex;
@@ -301,19 +347,21 @@ h1 {
 
 .stream-control-button {
   display: inline-flex;
-  min-height: 34px;
+  width: 38px;
+  min-height: 38px;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 0 11px;
+  padding: 0;
   border: 1px solid rgba(223, 255, 236, .18);
   border-radius: 10px;
   background: rgba(255, 255, 255, .09);
   color: #f6fff8;
-  font-size: 11px;
-  font-weight: 750;
-  white-space: nowrap;
   -webkit-tap-highlight-color: transparent;
+}
+
+.stream-control-button .svg-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .stream-control-button:active {
@@ -326,13 +374,8 @@ h1 {
   color: #17351e;
 }
 
-.stream-play-button .svg-icon {
-  width: 15px;
-  height: 15px;
-}
-
 .stream-sound-button {
-  min-width: 62px;
+  flex: 0 0 auto;
 }
 
 .stream-volume {
@@ -343,54 +386,6 @@ h1 {
 
 .stream-fullscreen-button {
   margin-left: auto;
-}
-
-.stream-fullscreen-icon {
-  position: relative;
-  width: 13px;
-  height: 13px;
-  border: 2px solid currentColor;
-  border-radius: 3px;
-}
-
-.stream-fullscreen-icon::before,
-.stream-fullscreen-icon::after {
-  position: absolute;
-  width: 5px;
-  height: 5px;
-  background: #193628;
-  content: "";
-}
-
-.stream-fullscreen-icon::before {
-  top: -3px;
-  left: -3px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-}
-
-.stream-fullscreen-icon::after {
-  right: -3px;
-  bottom: -3px;
-  border-top: 2px solid currentColor;
-  border-left: 2px solid currentColor;
-}
-
-.stream-fullscreen-icon.exit {
-  border: 0;
-}
-
-.stream-fullscreen-icon.exit::before {
-  inset: 1px auto auto 1px;
-  width: 9px;
-  height: 9px;
-  border: 0;
-  background: transparent;
-  box-shadow: inset 2px 2px currentColor, inset -2px -2px currentColor;
-}
-
-.stream-fullscreen-icon.exit::after {
-  display: none;
 }
 
 .stream-player:fullscreen,

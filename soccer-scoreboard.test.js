@@ -16,6 +16,7 @@ const {
   isValidScoreboardDate,
   recordLiveStreamViewer,
   normalizeSoccerLiveStream,
+  normalizeSavedSoccerLiveStreams,
   normalizeSoccerEvent,
   normalizeSoccerMatchDetails,
   normalizeSoccerStandings,
@@ -78,6 +79,23 @@ test('accepts HTTPS YouTube embeds and HLS sources for the live stream', () => {
   assert.equal(normalizeSoccerLiveStream('http://media.example.com/live.m3u8'), null);
   assert.equal(normalizeSoccerLiveStream('https://user:password@media.example.com/live.m3u8'), null);
   assert.equal(normalizeSoccerLiveStream('https://youtube.com.example.com/live/abcdefghijk'), null);
+});
+
+test('loads legacy live stream settings and validates multiple saved streams', () => {
+  const legacy = {
+    id: 'legacy-stream-id-1234',
+    url: 'https://youtu.be/abcdefghijk',
+    title: 'Old stream'
+  };
+  const multiple = normalizeSavedSoccerLiveStreams([
+    { id: 'saved-stream-id-1234', url: 'https://media.example.com/live.m3u8', title: 'HLS stream' },
+    { id: 'invalid', url: 'http://invalid.example.com/live.m3u8', title: 'Bad stream' }
+  ]);
+
+  assert.equal(normalizeSavedSoccerLiveStreams(null, legacy)[0].title, 'Old stream');
+  assert.equal(multiple.length, 1);
+  assert.equal(multiple[0].id, 'saved-stream-id-1234');
+  assert.equal(multiple[0].type, 'hls');
   assert.equal(normalizeSoccerLiveStream('https://www.youtube.com/watch?v=short'), null);
   assert.equal(normalizeSoccerLiveStream('https://media.example.com/live.mp4'), null);
 });
@@ -245,9 +263,16 @@ test('fetches and caches match details from the selected ESPN competition', asyn
   assert.match(calls[0], /\/eng\.1\/summary\?event=details-test-1/);
 });
 
-test('includes only the six requested competitions', () => {
+test('includes the requested UEFA and domestic competitions', () => {
+  assert.deepEqual(soccerLeagues.slice(0, 3).map((league) => league.id), [
+    'uefa.champions',
+    'uefa.europa',
+    'uefa.europa.conf'
+  ]);
   assert.deepEqual(soccerLeagues.map((league) => league.name), [
     'UEFA Chempionlar Ligasi',
+    'UEFA Yevropa Ligasi',
+    'UEFA Konferensiyalar Ligasi',
     'Angliya Premyer Ligasi',
     'LaLiga',
     'Ligue 1',
@@ -293,6 +318,8 @@ test('loads only selected competitions from ESPN and caches the scoreboard', asy
   assert.equal(calls.length, soccerLeagues.length);
   assert.ok(calls.every((url) => url.includes(`dates=${date}`)));
   assert.ok(calls.every((url) => url.includes('espn.com')));
+  assert.ok(calls.some((url) => url.includes('/uefa.europa/scoreboard')));
+  assert.ok(calls.some((url) => url.includes('/uefa.europa.conf/scoreboard')));
   assert.equal(await fetchSoccerScoreboard(date, fakeFetch), first);
   assert.equal(calls.length, soccerLeagues.length);
 });
@@ -316,7 +343,7 @@ test('calculates a current-season league table and excludes unrelated fixtures',
     makeEvent('draw', '2026-08-08T12:00:00Z', 'a', 'c', 1, 1),
     makeEvent('future', '2026-08-15T12:00:00Z', 'b', 'a', 0, 0, 'premier-league', 'pre')
   ];
-  const table = normalizeSoccerStandings(events, soccerLeagues[1], {
+  const table = normalizeSoccerStandings(events, soccerLeagues.find((league) => league.id === 'eng.1'), {
     startDate: '2026-06-01T00:00:00Z',
     displayName: '2026-27 Angliya Premyer Ligasi'
   });
@@ -375,7 +402,7 @@ test('fetches and caches current-season tables for all selected leagues', async 
     fetchSoccerStandings('all', 2088, fakeFetch)
   ]);
 
-  assert.equal(first.tables.length, 6);
+  assert.equal(first.tables.length, 8);
   assert.equal(first.partial, false);
   assert.equal(calls.length, soccerLeagues.length);
   assert.ok(calls.every((url) => url.includes('dates=2088') && url.includes('limit=1000')));
@@ -412,7 +439,8 @@ test('serves the embedded Mini App and its scoreboard API', async (t) => {
     'bandage', 'ball-football', 'bell', 'calendar-days', 'check', 'chevron-down',
     'chevron-left', 'chevron-right', 'circle-dot', 'circle-x', 'flag', 'goal',
     'moon', 'monitor', 'pause', 'pin', 'play', 'refresh-cw', 'repeat-2',
-    'shield-check', 'square', 'sun', 'timer', 'trophy', 'tv', 'user-round', 'x'
+    'maximize', 'minimize', 'shield-check', 'square', 'sun', 'timer', 'trophy',
+    'tv', 'user-round', 'volume-2', 'volume-x', 'x'
   ];
   const icons = await Promise.all(iconNames.map((name) => fetch(`${baseUrl}/mini-app/icons/${name}.svg`)));
   for (const icon of icons) {
@@ -436,7 +464,7 @@ test('serves the embedded Mini App and its scoreboard API', async (t) => {
   const liveStreamResponse = await fetch(`${baseUrl}/api/mini-app/live-stream`);
   assert.equal(liveStreamResponse.status, 200);
   assert.equal(liveStreamResponse.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await liveStreamResponse.json(), { stream: null, viewers: 0 });
+  assert.deepEqual(await liveStreamResponse.json(), { streams: [], stream: null, viewers: 0 });
   const invalidViewer = await fetch(`${baseUrl}/api/mini-app/live-stream/viewer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -452,7 +480,7 @@ test('serves the embedded Mini App and its scoreboard API', async (t) => {
     })
   });
   assert.equal(inactiveStreamViewer.status, 200);
-  assert.deepEqual(await inactiveStreamViewer.json(), { viewers: 0, streamChanged: true });
+  assert.deepEqual(await inactiveStreamViewer.json(), { viewers: 0, streamChanged: true, streams: [] });
   const unauthenticatedPreferences = await fetch(`${baseUrl}/api/mini-app/notification-preferences`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -466,9 +494,10 @@ test('uses the configured public origin with the embedded app path', () => {
 });
 
 test('creates a Mini App link that directly opens the live stream', () => {
-  const url = new URL(getMiniAppLiveStreamUrl());
+  const url = new URL(getMiniAppLiveStreamUrl('live-stream-id-1234'));
   assert.equal(url.pathname, '/mini-app/');
   assert.equal(url.searchParams.get('stream'), 'live');
+  assert.equal(url.searchParams.get('streamId'), 'live-stream-id-1234');
 });
 
 test('creates a Mini App link targeting the requested match and Tashkent date', () => {

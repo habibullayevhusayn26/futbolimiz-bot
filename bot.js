@@ -162,7 +162,7 @@ app.use('/api/mini-app', (req, res, next) => {
   return next();
 });
 
-let soccerLiveStream = null;
+let soccerLiveStreams = [];
 const activeSoccerStreamViewers = new Map();
 
 function pruneLiveStreamViewers(now = Date.now()) {
@@ -202,11 +202,49 @@ function publicLiveStream(stream) {
   };
 }
 
+function normalizeSavedSoccerLiveStreams(savedStreams, legacyStream) {
+  const saved = Array.isArray(savedStreams)
+    ? savedStreams
+    : legacyStream
+      ? [legacyStream]
+      : [];
+  return saved.flatMap((savedStream) => {
+    const normalized = savedStream && normalizeSoccerLiveStream(savedStream.url);
+    if (!normalized) return [];
+    return [{
+      ...normalized,
+      id: typeof savedStream.id === 'string' && /^[A-Za-z0-9_-]{16,80}$/.test(savedStream.id)
+        ? savedStream.id
+        : crypto.randomUUID(),
+      title: String(savedStream.title || ''),
+      match: savedStream.match && typeof savedStream.match === 'object'
+        ? {
+          id: String(savedStream.match.id || ''),
+          leagueId: String(savedStream.match.leagueId || ''),
+          leagueName: String(savedStream.match.leagueName || ''),
+          startTime: String(savedStream.match.startTime || ''),
+          homeName: String(savedStream.match.homeName || ''),
+          awayName: String(savedStream.match.awayName || '')
+        }
+        : null
+    }];
+  });
+}
+
+function getPublicLiveStreams() {
+  return soccerLiveStreams.map((stream) => ({
+    ...publicLiveStream(stream),
+    viewers: getActiveLiveViewerCount(stream.id)
+  }));
+}
+
 app.get('/api/mini-app/live-stream', (req, res) => {
   res.set('Cache-Control', 'no-store');
+  const streams = getPublicLiveStreams();
   return res.status(200).json({
-    stream: publicLiveStream(soccerLiveStream),
-    viewers: soccerLiveStream ? getActiveLiveViewerCount(soccerLiveStream.id) : 0
+    streams,
+    stream: streams[0] || null,
+    viewers: streams[0]?.viewers || 0
   });
 });
 
@@ -217,17 +255,19 @@ app.post('/api/mini-app/live-stream/viewer', (req, res) => {
   if (!/^[A-Za-z0-9_-]{20,80}$/.test(viewerId) || !/^[A-Za-z0-9_-]{16,80}$/.test(streamId)) {
     return res.status(400).json({ ok: false, error: 'Tomoshabin ma’lumoti noto‘g‘ri.' });
   }
-  if (!soccerLiveStream || streamId !== soccerLiveStream.id) {
+  const stream = soccerLiveStreams.find((item) => item.id === streamId);
+  if (!stream) {
     return res.status(200).json({
-      viewers: soccerLiveStream ? getActiveLiveViewerCount(soccerLiveStream.id) : 0,
-      streamChanged: true
+      viewers: 0,
+      streamChanged: true,
+      streams: getPublicLiveStreams()
     });
   }
   const viewers = recordLiveStreamViewer(viewerId, streamId);
   if (viewers === null) {
     return res.status(429).json({ ok: false, error: 'Tomoshabinlar soni vaqtincha cheklangan.' });
   }
-  return res.status(200).json({ viewers });
+  return res.status(200).json({ viewers, streams: getPublicLiveStreams() });
 });
 app.use('/mini-app', express.static(path.join(__dirname, 'mini-app')));
 app.get('/mini-app', (req, res) => res.sendFile(path.join(__dirname, 'mini-app', 'index.html')));
@@ -239,6 +279,8 @@ app.get('/health', (req, res) => res.status(200).json({
 
 const soccerLeagues = [
   { id: 'uefa.champions', name: 'UEFA Chempionlar Ligasi' },
+  { id: 'uefa.europa', name: 'UEFA Yevropa Ligasi' },
+  { id: 'uefa.europa.conf', name: 'UEFA Konferensiyalar Ligasi' },
   { id: 'eng.1', name: 'Angliya Premyer Ligasi' },
   { id: 'esp.1', name: 'LaLiga' },
   { id: 'fra.1', name: 'Ligue 1' },
@@ -1360,9 +1402,10 @@ function getMiniAppUrl() {
   return url.toString();
 }
 
-function getMiniAppLiveStreamUrl() {
+function getMiniAppLiveStreamUrl(streamId) {
   const url = new URL(getMiniAppUrl());
   url.searchParams.set('stream', 'live');
+  if (streamId) url.searchParams.set('streamId', streamId);
   return url.toString();
 }
 
@@ -1724,13 +1767,13 @@ async function saveSettings() {
 
 async function saveSoccerLiveStream(ctx, stream) {
   const savedStream = { ...stream, id: crypto.randomUUID() };
+  const updatedStreams = [...soccerLiveStreams, savedStream];
   await BotConfig.findOneAndUpdate(
     { configKey: 'main_config' },
-    { $set: { 'settings.liveStream': savedStream } },
+    { $set: { 'settings.liveStreams': updatedStreams, 'settings.liveStream': null } },
     { upsert: true }
   );
-  soccerLiveStream = savedStream;
-  activeSoccerStreamViewers.clear();
+  soccerLiveStreams = updatedStreams;
   await logAdminAction(
     ctx,
     'mini_app_live_stream_updated',
@@ -1754,28 +1797,11 @@ async function hydrateSettings() {
   }
   data.settings.requiredChannels = configDocument.channels || [];
   data.settings.messages = { ...defaultMessages };
+  const savedLiveStreams = configDocument.settings?.liveStreams;
   const savedLiveStream = configDocument.settings?.liveStream;
-  const normalizedLiveStream = savedLiveStream && normalizeSoccerLiveStream(savedLiveStream.url);
-  soccerLiveStream = normalizedLiveStream
-    ? {
-      ...normalizedLiveStream,
-      id: typeof savedLiveStream.id === 'string' && /^[A-Za-z0-9_-]{16,80}$/.test(savedLiveStream.id)
-        ? savedLiveStream.id
-        : crypto.randomUUID(),
-      title: String(savedLiveStream.title || ''),
-      match: savedLiveStream.match && typeof savedLiveStream.match === 'object'
-        ? {
-          id: String(savedLiveStream.match.id || ''),
-          leagueId: String(savedLiveStream.match.leagueId || ''),
-          leagueName: String(savedLiveStream.match.leagueName || ''),
-          startTime: String(savedLiveStream.match.startTime || ''),
-          homeName: String(savedLiveStream.match.homeName || ''),
-          awayName: String(savedLiveStream.match.awayName || '')
-        }
-        : null
-    }
-    : null;
-  if (savedLiveStream && !soccerLiveStream) {
+  soccerLiveStreams = normalizeSavedSoccerLiveStreams(savedLiveStreams, savedLiveStream);
+  if ((Array.isArray(savedLiveStreams) && savedLiveStreams.length !== soccerLiveStreams.length) ||
+      (savedLiveStream && !Array.isArray(savedLiveStreams) && !soccerLiveStreams.length)) {
     console.warn('Saved Mini App live stream URL is invalid and was ignored.');
   }
 }
@@ -3040,15 +3066,24 @@ bot.action('admin:panel', async (ctx) => {
 bot.action('admin:stream', async (ctx) => {
   await ctx.answerCbQuery();
   if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) return ctx.reply('Ruxsat yo\'q.');
-  const current = soccerLiveStream
-    ? `Hozirgi efir: ${soccerLiveStream.title || 'Nomsiz efir'} (${soccerLiveStream.type === 'youtube' ? 'YouTube' : 'HLS'})\n${soccerLiveStream.url}`
+  const current = soccerLiveStreams.length
+    ? `Faol efirlar (${soccerLiveStreams.length}):\n${soccerLiveStreams.map((stream, index) =>
+      `${index + 1}. ${stream.title || 'Nomsiz efir'} (${stream.type === 'youtube' ? 'YouTube' : 'HLS'})`
+    ).join('\n')}`
     : 'Hozircha efir manzili sozlanmagan.';
+  const streamButtons = soccerLiveStreams.map((stream) => [
+    Markup.button.callback(
+      `⏹ ${stream.title || 'Nomsiz efir'}`.slice(0, 64),
+      `admin:stream_off:${stream.id}`
+    )
+  ]);
   return ctx.reply(
     `${current}\n\nYouTube efir havolasi yoki HTTPS HLS (.m3u8) havolasini kiriting.`,
     Markup.inlineKeyboard([
       [Markup.button.callback('🔗 Efir havolasini kiritish', 'admin:stream_set')],
-      ...(soccerLiveStream
-        ? [[Markup.button.callback('⏹ Efirni o‘chirish', 'admin:stream_off')]]
+      ...streamButtons,
+      ...(soccerLiveStreams.length
+        ? [[Markup.button.callback('⏹ Barcha efirlarni o‘chirish', 'admin:stream_off')]]
         : []),
       [Markup.button.callback('⬅️ Admin panel', 'admin:panel')]
     ])
@@ -3137,10 +3172,11 @@ bot.action(/^admin:stream_match:([a-z0-9.]+):([A-Za-z0-9_-]{1,30})$/, async (ctx
     };
     await saveSoccerLiveStream(ctx, stream);
     reset(ctx);
+    const streamUrl = getMiniAppLiveStreamUrl(stream.id);
     return ctx.reply(
-      `✅ “${stream.title}” o‘yini uchun jonli efir yoqildi.\nMini App havolasi: ${getMiniAppLiveStreamUrl()}`,
+      `✅ “${stream.title}” o‘yini uchun jonli efir yoqildi.\nMini App havolasi: ${streamUrl}`,
       Markup.inlineKeyboard([[
-        Markup.button.webApp('▶️ Jonli efirni ochish', getMiniAppLiveStreamUrl())
+        Markup.button.webApp('▶️ Jonli efirni ochish', streamUrl)
       ]])
     );
   } catch (error) {
@@ -3173,13 +3209,32 @@ bot.action('admin:stream_off', async (ctx) => {
   if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) return ctx.reply('Ruxsat yo\'q.');
   await BotConfig.findOneAndUpdate(
     { configKey: 'main_config' },
-    { $set: { 'settings.liveStream': null } },
+    { $set: { 'settings.liveStreams': [], 'settings.liveStream': null } },
     { upsert: true }
   );
-  soccerLiveStream = null;
+  soccerLiveStreams = [];
   activeSoccerStreamViewers.clear();
   await logAdminAction(ctx, 'mini_app_live_stream_disabled');
-  return ctx.reply('Jonli efir Mini App’dan o‘chirildi.', adminKeyboard(ctx));
+  return ctx.reply('Barcha jonli efirlar Mini App’dan o‘chirildi.', adminKeyboard(ctx));
+});
+
+bot.action(/^admin:stream_off:([A-Za-z0-9_-]{16,80})$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isAdmin(ctx) || !hasPermission(ctx, 'settings')) return ctx.reply('Ruxsat yo\'q.');
+  const stream = soccerLiveStreams.find((item) => item.id === ctx.match[1]);
+  if (!stream) return ctx.reply('Bu efir allaqachon o‘chirilgan.');
+  const updatedStreams = soccerLiveStreams.filter((item) => item.id !== stream.id);
+  await BotConfig.findOneAndUpdate(
+    { configKey: 'main_config' },
+    { $set: { 'settings.liveStreams': updatedStreams, 'settings.liveStream': null } },
+    { upsert: true }
+  );
+  soccerLiveStreams = updatedStreams;
+  for (const [viewerId, viewer] of activeSoccerStreamViewers) {
+    if (viewer.streamId === stream.id) activeSoccerStreamViewers.delete(viewerId);
+  }
+  await logAdminAction(ctx, 'mini_app_live_stream_disabled', stream.id);
+  return ctx.reply(`“${stream.title || 'Nomsiz efir'}” efiri o‘chirildi.`, adminKeyboard(ctx));
 });
 
 bot.action('admin:exit', async (ctx) => {
@@ -3601,10 +3656,11 @@ bot.on('text', async (ctx) => {
     }
     const savedStream = await saveSoccerLiveStream(ctx, { ...draft, title, match: null });
     reset(ctx);
+    const streamUrl = getMiniAppLiveStreamUrl(savedStream.id);
     return ctx.reply(
-      `✅ “${savedStream.title}” nomli jonli efir yoqildi.\nMini App havolasi: ${getMiniAppLiveStreamUrl()}`,
+      `✅ “${savedStream.title}” nomli jonli efir yoqildi.\nMini App havolasi: ${streamUrl}`,
       Markup.inlineKeyboard([[
-        Markup.button.webApp('▶️ Jonli efirni ochish', getMiniAppLiveStreamUrl())
+        Markup.button.webApp('▶️ Jonli efirni ochish', streamUrl)
       ]])
     );
   }
@@ -3785,6 +3841,7 @@ module.exports = {
   mainMenuCommands,
   normalizeSoccerEvent,
   normalizeSoccerLiveStream,
+  normalizeSavedSoccerLiveStreams,
   normalizeSoccerMatchDetails,
   normalizeSoccerStandings,
   openJoinRequestChatPicker,
