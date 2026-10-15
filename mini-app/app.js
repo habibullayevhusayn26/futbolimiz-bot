@@ -817,6 +817,15 @@
     return [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || 'Telegram foydalanuvchisi';
   }
 
+  function profileThemeIndex(user) {
+    const identity = String(user.id || user.username || profileDisplayName(user));
+    const hash = Array.from(identity).reduce(
+      (value, character) => (value * 31 + character.codePointAt(0)) >>> 0,
+      7
+    );
+    return hash % 8;
+  }
+
   function renderProfile() {
     const user = telegram?.initDataUnsafe?.user;
     if (!user || !telegram?.initData) {
@@ -825,6 +834,7 @@
     }
 
     const fullName = profileDisplayName(user);
+    const themeIndex = profileThemeIndex(user);
     const initials = fullName.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toLocaleUpperCase();
     const avatar = user.photo_url
       ? `<img src="${escapeAttribute(user.photo_url)}" alt="" onerror="this.remove()">`
@@ -847,7 +857,7 @@
     });
     profileContent.innerHTML = `
       <section class="profile-card">
-        <div class="profile-banner">
+        <div class="profile-banner" data-profile-theme="${themeIndex}">
           <div class="profile-identity">
             <div class="profile-avatar">${avatar}</div>
             <div class="profile-name">${escapeHtml(fullName)}</div>

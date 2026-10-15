@@ -817,23 +817,62 @@ h1 {
   isolation: isolate;
   margin: 0 -16px 8px;
   overflow: hidden;
-  background:
-    linear-gradient(135deg, rgba(34, 92, 57, .1), transparent 54%, rgba(24, 77, 47, .12)),
-    #4d8059;
+  background: linear-gradient(125deg, #087f8c, #08a6a6 52%, #086b83);
+}
+
+.profile-banner[data-profile-theme="1"] {
+  background: linear-gradient(125deg, #a32862, #df3f75 52%, #8b285e);
+}
+
+.profile-banner[data-profile-theme="2"] {
+  background: linear-gradient(125deg, #4b3eae, #7657dc 52%, #493894);
+}
+
+.profile-banner[data-profile-theme="3"] {
+  background: linear-gradient(125deg, #b34a13, #ed7a20 52%, #9d3516);
+}
+
+.profile-banner[data-profile-theme="4"] {
+  background: linear-gradient(125deg, #167347, #25a86d 52%, #11664f);
+}
+
+.profile-banner[data-profile-theme="5"] {
+  background: linear-gradient(125deg, #2454ae, #3885e8 52%, #244a9c);
+}
+
+.profile-banner[data-profile-theme="6"] {
+  background: linear-gradient(125deg, #a33327, #e45d47 52%, #982c40);
+}
+
+.profile-banner[data-profile-theme="7"] {
+  background: linear-gradient(125deg, #6f489e, #a45bd0 52%, #673b8e);
 }
 
 .profile-banner::before {
   position: absolute;
-  z-index: -1;
+  z-index: 0;
   inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='58' height='54' viewBox='0 0 58 54'%3E%3Cg fill='%231f603c' fill-opacity='.18'%3E%3Cpath d='M28 38c-1-8-7-13-15-14 1 8 6 13 15 14Zm2-1c1-9 6-15 14-17-1 9-6 15-14 17Zm-1-1c-1-9 1-15 4-21 4 7 4 14-4 21Zm-1 5h3v5h-3z'/%3E%3C/g%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='58' height='54' viewBox='0 0 58 54'%3E%3Cg fill='%23fff' fill-opacity='.22'%3E%3Cpath d='M28 38c-1-8-7-13-15-14 1 8 6 13 15 14Zm2-1c1-9 6-15 14-17-1 9-6 15-14 17Zm-1-1c-1-9 1-15 4-21 4 7 4 14-4 21Zm-1 5h3v5h-3z'/%3E%3C/g%3E%3C/svg%3E");
   background-position: 2px 0;
   background-size: 58px 54px;
   content: "";
+  pointer-events: none;
+}
+
+.profile-banner::after {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 25%, rgba(255, 255, 255, .25) 48%, transparent 68%);
+  background-size: 220% 100%;
+  animation: profile-banner-shimmer 5s ease-in-out infinite;
+  content: "";
+  pointer-events: none;
 }
 
 .profile-identity {
   position: relative;
+  z-index: 1;
   display: grid;
   justify-items: center;
   gap: 7px;
@@ -853,7 +892,7 @@ h1 {
   color: #fff;
   font-size: 23px;
   font-weight: 850;
-  box-shadow: 0 3px 12px rgba(27, 73, 42, .18);
+  box-shadow: 0 3px 12px rgba(16, 31, 56, .24);
 }
 
 .profile-avatar img {
@@ -1959,6 +1998,11 @@ h1 {
 #match-date:focus-visible {
   outline: 3px solid rgba(25, 118, 210, .24);
   outline-offset: 2px;
+}
+
+@keyframes profile-banner-shimmer {
+  0%, 18% { background-position: 120% 0; }
+  72%, 100% { background-position: -120% 0; }
 }
 
 @keyframes menu-in {

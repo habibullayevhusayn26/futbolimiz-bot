@@ -979,8 +979,7 @@ function addNavigationControls(extra = {}) {
   options = colorInlineKeyboard(options);
   const markup = options.reply_markup || {};
   const isMainMenu = Array.isArray(markup.inline_keyboard) &&
-    markup.inline_keyboard.some((row) => row.some((button) => button.callback_data === 'welcome:join_chat_connect')) &&
-    markup.inline_keyboard.some((row) => row.some((button) => button.callback_data === 'welcome:required_list'));
+    markup.inline_keyboard.some((row) => row.some((button) => button.callback_data === 'welcome:applications'));
   const isAdminMainMenu = Array.isArray(markup.inline_keyboard) &&
     markup.inline_keyboard.some((row) => row.some((button) => button.callback_data === 'admin:exit'));
   if (isMainMenu || isAdminMainMenu) return options;
@@ -1252,16 +1251,10 @@ function welcomeMarkup(ctx) {
   const rows = [
     [webAppButton],
     [{
-      text: 'Kanal/guruh ulash',
-      callback_data: 'welcome:join_chat_connect',
+      text: '📝 Zayafka',
+      callback_data: 'welcome:applications',
       style: 'success',
       icon_custom_emoji_id: '5217943819311389632'
-    }],
-    [{
-      text: 'Ulangan kanallar ro\'yxati',
-      callback_data: 'welcome:required_list',
-      style: 'success',
-      icon_custom_emoji_id: '5393243708361567810'
     }]
   ];
   const bottomRow = [{
@@ -1278,6 +1271,28 @@ function welcomeMarkup(ctx) {
   });
   rows.push(bottomRow);
   return Markup.inlineKeyboard(rows).reply_markup;
+}
+
+function welcomeApplicationsMarkup() {
+  return Markup.inlineKeyboard([
+    [{
+      text: '📣 Kanal/guruh ulash',
+      callback_data: 'welcome:join_chat_connect',
+      style: 'success',
+      icon_custom_emoji_id: '5217943819311389632'
+    }],
+    [{
+      text: '📋 Ulangan kanallar ro‘yxati',
+      callback_data: 'welcome:required_list',
+      style: 'success',
+      icon_custom_emoji_id: '5393243708361567810'
+    }],
+    [{
+      text: '⬅️ Start menyusiga qaytish',
+      callback_data: 'welcome:back',
+      style: 'danger'
+    }]
+  ]).reply_markup;
 }
 
 async function registerMainMenuCommands(telegram) {
@@ -3035,6 +3050,19 @@ bot.action('welcome:join_chat_connect', async (ctx) => {
   return openJoinRequestChatPicker(ctx);
 });
 
+bot.action('welcome:applications', async (ctx) => {
+  await ctx.answerCbQuery();
+  return ctx.editMessageText(
+    '<b>📝 Zayafka</b>\n\nKanal yoki guruhni ulang yoki avval ulangan chatlaringizni ko‘ring:',
+    replyOptions(welcomeApplicationsMarkup())
+  );
+});
+
+bot.action('welcome:back', async (ctx) => {
+  await ctx.answerCbQuery();
+  return ctx.editMessageText(welcomeMessage(ctx), replyOptions(welcomeMarkup(ctx)));
+});
+
 bot.action('welcome:required_list', async (ctx) => {
   await ctx.answerCbQuery();
   return showJoinRequestChats(ctx);
@@ -3346,6 +3374,8 @@ module.exports = {
   normalizeSoccerStandings,
   openJoinRequestChatPicker,
   registerMainMenuCommands,
+  welcomeApplicationsMarkup,
+  welcomeMarkup,
   soccerLeagues,
   verifyMiniAppInitData
 };
