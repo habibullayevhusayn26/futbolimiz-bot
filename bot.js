@@ -617,22 +617,33 @@ async function requiredSubscription(ctx) {
 }
 
 async function checkFullAdmin(ctx, username) {
-  const chat = await ctx.telegram.getChat(username);
-  if (chat.type !== 'channel') throw new Error('Bu username kanalga tegishli emas.');
+  if (!ctx?.telegram || !ctx?.from?.id) {
+    throw new Error('Foydalanuvchi aniqlanmadi.');
+  }
+
+  const normalizedUsername = normalizeChannel(username);
+  const chat = await ctx.telegram.getChat(normalizedUsername);
+  if (!chat || chat.type !== 'channel') throw new Error('Bu username kanalga tegishli emas.');
 
   const userMember = await ctx.telegram.getChatMember(chat.id, ctx.from.id);
-  if (!['creator', 'administrator'].includes(userMember.status)) {
+  if (!userMember || !['creator', 'administrator'].includes(userMember.status)) {
     throw new Error('Kanalni qo\'shish uchun kanalda admin yoki ega bo\'lishingiz kerak.');
   }
+
   const botInfo = await ctx.telegram.getMe();
   const member = await ctx.telegram.getChatMember(chat.id, botInfo.id);
-  if (!['creator', 'administrator'].includes(member.status)) {
+  if (!member || !['creator', 'administrator'].includes(member.status)) {
     throw new Error('Bot kanalida administrator bo\'lishi kerak.');
   }
   if (member.status === 'administrator' && member.can_post_messages === false) {
     throw new Error('Botga kanalda post yuborish huquqini bering.');
   }
-  return { id: chat.id, title: chat.title || username, username: chat.username ? `@${chat.username}` : username };
+
+  return {
+    id: chat.id,
+    title: chat.title || normalizedUsername,
+    username: chat.username ? `@${chat.username}` : normalizedUsername
+  };
 }
 
 async function saveSettings() {
