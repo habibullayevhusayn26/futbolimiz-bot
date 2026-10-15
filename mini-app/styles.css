@@ -893,6 +893,9 @@ h1 {
 
 .profile-banner {
   position: relative;
+  display: grid;
+  aspect-ratio: 2 / 4;
+  align-items: center;
   isolation: isolate;
   margin: 0 -16px 8px;
   overflow: hidden;
@@ -927,6 +930,17 @@ h1 {
   background: linear-gradient(125deg, #6f489e, #a45bd0 52%, #673b8e);
 }
 
+.profile-banner::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background-image: var(--profile-background-pattern);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  content: "";
+  pointer-events: none;
+}
+
 .profile-banner::after {
   position: absolute;
   z-index: 0;
@@ -944,7 +958,7 @@ h1 {
   display: grid;
   justify-items: center;
   gap: 5px;
-  padding: 10px 12px 20px;
+  padding: 16px 12px;
 }
 
 .profile-avatar-wrap {
