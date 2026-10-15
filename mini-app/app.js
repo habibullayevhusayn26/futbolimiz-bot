@@ -962,8 +962,8 @@
 
   function profilePattern(user) {
     const patternIndex = profileIdentityHash(user) % 20;
-    const avatarOrnaments = Array.from({ length: 9 }, (_, index) => {
-      const angle = (patternIndex * 13 + index * 40 + ((patternIndex + index * 3) % 5 - 2) * 3) * Math.PI / 180;
+    const avatarOrnaments = Array.from({ length: 14 }, (_, index) => {
+      const angle = (patternIndex * 13 + index * (360 / 14) + ((patternIndex + index * 3) % 5 - 2) * 2) * Math.PI / 180;
       const radius = 53 + ((patternIndex * 7 + index * 3) % 5) * 1.5;
       const x = 80 + Math.cos(angle) * radius;
       const y = 80 + Math.sin(angle) * radius;
@@ -972,19 +972,19 @@
       const opacity = 0.14 + ((patternIndex + index) % 4) * 0.025;
       return `<g transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${rotation}) scale(${size}) translate(-12 -12)" opacity="${opacity}"><path d="M12 20C11 14 6 10 2 9c1 6 5 10 10 11Zm0-2c1-7 5-11 10-13-1 7-5 12-10 13Zm0 1c-1-7-1-12 1-17 4 6 4 11-1 17Zm-1 0h2v4h-2z"/></g>`;
     }).join('');
-    const backgroundOrnaments = Array.from({ length: 16 }, (_, index) => {
-      const cell = (index * 7 + patternIndex) % 20;
-      const column = cell % 4;
-      const row = Math.floor(cell / 4);
-      const x = 12 + column * 76 + ((patternIndex * 11 + index * 17) % 30);
-      const y = 20 + row * 126 + ((patternIndex * 19 + index * 23) % 52);
-      const size = 0.48 + ((patternIndex + index * 3) % 5) * 0.07;
+    const backgroundOrnaments = Array.from({ length: 24 }, (_, index) => {
+      const cell = (index * 7 + patternIndex) % 24;
+      const column = cell % 6;
+      const row = Math.floor(cell / 6);
+      const x = 8 + column * 50 + ((patternIndex * 11 + index * 17) % 15);
+      const y = 7 + row * 36 + ((patternIndex * 19 + index * 23) % 12);
+      const size = 0.4 + ((patternIndex + index * 3) % 5) * 0.055;
       const rotation = (patternIndex * 17 + index * 53) % 360;
       const opacity = 0.08 + ((patternIndex + index) % 4) * 0.018;
       return `<g transform="translate(${x} ${y}) rotate(${rotation}) scale(${size})" opacity="${opacity}"><path d="M12 20C11 14 6 10 2 9c1 6 5 10 10 11Zm0-2c1-7 5-11 10-13-1 7-5 12-10 13Zm0 1c-1-7-1-12 1-17 4 6 4 11-1 17Zm-1 0h2v4h-2z"/></g>`;
     }).join('');
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" fill="#fff">${avatarOrnaments}</svg>`;
-    const backgroundSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 640" fill="#fff">${backgroundOrnaments}</svg>`;
+    const backgroundSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 160" fill="#fff">${backgroundOrnaments}</svg>`;
     return {
       index: patternIndex,
       image: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`,

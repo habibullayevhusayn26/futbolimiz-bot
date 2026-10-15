@@ -894,7 +894,7 @@ h1 {
 .profile-banner {
   position: relative;
   display: grid;
-  aspect-ratio: 2 / 4;
+  aspect-ratio: 4 / 2;
   align-items: center;
   isolation: isolate;
   margin: 0 -16px 8px;
