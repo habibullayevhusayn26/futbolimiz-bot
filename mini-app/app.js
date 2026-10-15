@@ -568,14 +568,63 @@
 
   function renderMatchTimeline(events, match, emptyMessage = 'O‘yin hodisalari hozircha mavjud emas.') {
     if (!events.length) return `<p class="detail-empty">${escapeHtml(emptyMessage)}</p>`;
-    const teamIds = { home: match.home.id, away: match.away.id };
     return `<ol class="match-timeline">${events.map((item) => {
-      const side = item.teamId === teamIds.home ? 'home' : item.teamId === teamIds.away ? 'away' : '';
-      const heading = item.type ? `<strong>${escapeHtml(item.type)}</strong>` : '';
+      const side = matchEventSide(item, match);
       const clock = item.clock ? `<time>${escapeHtml(item.clock)}</time>` : '';
-      const athletes = item.athletes?.length ? `<span class="timeline-athletes">${escapeHtml(item.athletes.join(', '))}</span>` : '';
-      return `<li class="timeline-event ${side}">${clock}<div>${heading}<span>${escapeHtml(item.text)}</span>${athletes}</div></li>`;
+      const presentation = matchEventPresentation(item);
+      const athletes = item.athletes?.length
+        ? (presentation.kind === 'substitution'
+          ? item.athletes.join(' → ')
+          : presentation.kind === 'goal'
+            ? item.athletes[0]
+            : item.athletes.join(', '))
+        : '';
+      const description = `<strong>${escapeHtml(athletes || presentation.label)}</strong>${athletes ? `<span>${escapeHtml(presentation.label)}</span>` : ''}`;
+      if (!side) {
+        return `<li class="timeline-event neutral" title="${escapeAttribute(presentation.label)}">
+          <div class="event-neutral">${clock}<span class="timeline-icon" aria-hidden="true">${presentation.icon}</span>${description}</div>
+        </li>`;
+      }
+      return `<li class="timeline-event ${side}" title="${escapeAttribute(presentation.label)}">
+        <div class="event-detail">${description}</div>
+        <div class="event-marker">${clock}<span class="timeline-icon" aria-hidden="true">${presentation.icon}</span></div>
+        <span class="event-spacer" aria-hidden="true"></span>
+      </li>`;
     }).join('')}</ol>`;
+  }
+
+  function matchEventSide(item, match) {
+    if (item.teamId && item.teamId === match.home.id) return 'home';
+    if (item.teamId && item.teamId === match.away.id) return 'away';
+    const text = `${item.text || ''} ${item.athletes?.join(' ') || ''}`.toLocaleLowerCase();
+    const homeName = match.home.name.toLocaleLowerCase();
+    const awayName = match.away.name.toLocaleLowerCase();
+    if (homeName && text.includes(homeName)) return 'home';
+    if (awayName && text.includes(awayName)) return 'away';
+    return '';
+  }
+
+  function matchEventPresentation(item) {
+    const text = `${item.type || ''} ${item.text || ''}`.toLowerCase();
+    if (/own goal|o\.g\./i.test(text)) return { kind: 'goal', icon: '⚽', label: 'Avtogol' };
+    if (/red card|second yellow|sent off|sending off/i.test(text)) return { kind: 'red-card', icon: '🟥', label: 'Qizil kartochka' };
+    if (/yellow card/i.test(text)) return { kind: 'yellow-card', icon: '🟨', label: 'Sariq kartochka' };
+    if (/substitution|substitut|player on|player off/i.test(text)) return { kind: 'substitution', icon: '🔄', label: 'Almashtirish' };
+    if (/penalty.*(miss|save)|missed penalty/i.test(text)) return { kind: 'missed-penalty', icon: '❌', label: 'Penalti kiritilmadi' };
+    if (/penalty/i.test(text) && /goal|scored|score/i.test(text)) return { kind: 'goal', icon: '⚽', label: 'Penaltidan gol' };
+    if (/goal/i.test(text)) return { kind: 'goal', icon: '⚽', label: 'Gol' };
+    if (/\bvar\b|video assistant|video review/i.test(text)) return { kind: 'var', icon: '📺', label: 'VAR tekshiruvi' };
+    if (/kick.?off|first half begins/i.test(text)) return { kind: 'kickoff', icon: '▶️', label: 'O‘yin boshlandi' };
+    if (/start.*(?:2nd|second).*half|second half begins/i.test(text)) return { kind: 'second-half', icon: '▶️', label: 'Ikkinchi bo‘lim boshlandi' };
+    if (/match ends|end regular time|full.?time|second half ends/i.test(text)) return { kind: 'full-time', icon: '🏁', label: 'O‘yin yakunlandi' };
+    if (/half.?time|halftime|half ends/i.test(text)) return { kind: 'half-time', icon: '⏸️', label: 'Tanaffus' };
+    if (/extra time/i.test(text)) return { kind: 'extra-time', icon: '⏱️', label: 'Qo‘shimcha vaqt' };
+    if (/offside/i.test(text)) return { kind: 'offside', icon: '🚩', label: 'O‘yindan tashqari holat' };
+    if (/corner/i.test(text)) return { kind: 'corner', icon: '🚩', label: 'Burchak zarbasi' };
+    if (/save|saved/i.test(text)) return { kind: 'save', icon: '🧤', label: 'Darvozabon seyv qildi' };
+    if (/injur|medical|treatment/i.test(text)) return { kind: 'injury', icon: '🩹', label: 'Jarohat' };
+    if (/penalty/i.test(text)) return { kind: 'penalty', icon: '⚽', label: 'Penalti' };
+    return { kind: 'event', icon: '📌', label: 'Uchrashuv hodisasi' };
   }
 
   function formatPossession(value) {
@@ -597,20 +646,22 @@
   function renderLineups(lineups, match) {
     const available = lineups.filter((lineup) => lineup?.players?.length);
     if (!available.length) return '<p class="detail-empty">Tarkiblar hali e’lon qilinmagan yoki ESPN’da mavjud emas.</p>';
-    return `<div class="lineups">${['home', 'away'].map((side) => {
+    const halves = ['away', 'home'].map((side) => {
       const lineup = lineups.find((item) => item?.homeAway === side);
       const team = match[side];
       if (!lineup?.players?.length) {
-        return `<div class="lineup-team"><h3>${escapeHtml(team.name)}</h3><p class="detail-empty">Tarkib hali mavjud emas.</p></div>`;
+        return `<div class="pitch-half ${side}"><div class="pitch-team-name">${escapeHtml(team.name)}</div><p class="pitch-unavailable">Tarkib mavjud emas</p></div>`;
       }
       const starters = lineup.players.filter((player) => player.starter);
       const players = starters.length ? starters : lineup.players;
       const rows = lineupRows(players, lineup.formation);
-      return `<div class="lineup-team"><h3>${escapeHtml(lineup.teamName || team.name)}</h3>
-        <div class="formation-label">${lineup.formation ? `Tuzilish ${escapeHtml(lineup.formation)}` : starters.length ? 'Asosiy tarkib' : 'Tarkib'}</div>
-        <div class="football-pitch">${rows.map((row) => `<div class="pitch-row">${row.map((player) => `<span class="pitch-player"><i>${escapeHtml(player.jersey || player.position || '•')}</i><span>${escapeHtml(player.name)}</span></span>`).join('')}</div>`).join('')}</div>
+      const orientedRows = side === 'home' ? [...rows].reverse() : rows;
+      return `<div class="pitch-half ${side}">
+        <div class="pitch-team-name">${escapeHtml(lineup.teamName || team.name)}${lineup.formation ? ` · ${escapeHtml(lineup.formation)}` : ''}</div>
+        ${orientedRows.map((row) => `<div class="pitch-row">${row.map((player) => `<span class="pitch-player"><i>${escapeHtml(player.jersey || player.position || '•')}</i><span>${escapeHtml(player.name)}</span></span>`).join('')}</div>`).join('')}
       </div>`;
-    }).join('')}</div>`;
+    });
+    return `<div class="combined-pitch" aria-label="${escapeAttribute(`${match.away.name} va ${match.home.name} jamoalari tarkibi`)}">${halves.join('')}</div>`;
   }
 
   function lineupRows(players, formation) {
@@ -660,7 +711,13 @@
     if (/tackle/i.test(label)) return /effective/i.test(label) ? 'To‘pni olib qo‘yish' : 'Podkatlar';
     if (/interception/i.test(label)) return 'To‘pni ushlab qolish';
     if (/clearance/i.test(label)) return 'To‘pni qaytarish';
-    return label;
+    if (/block/i.test(label)) return 'To‘silgan zarbalar';
+    if (/duel/i.test(label)) return 'Yakkakurashlar';
+    if (/touch/i.test(label)) return 'To‘pga teginishlar';
+    if (/dribble/i.test(label)) return 'Aldab o‘tishlar';
+    if (/goal/i.test(label)) return 'Gollar';
+    if (/attempt/i.test(label)) return 'Urinishlar';
+    return 'Qo‘shimcha ko‘rsatkich';
   }
 
   function renderMatchStatistics(statistics, match) {
