@@ -26,6 +26,14 @@
   const profileContent = document.getElementById('profile-content');
   const profileBackButton = document.getElementById('profile-back-button');
   const profileThemeButton = document.getElementById('profile-theme-button');
+  const leagueLogoUrls = {
+    'uefa.champions': 'https://a.espncdn.com/i/leaguelogos/soccer/500/2.png',
+    'eng.1': 'https://a.espncdn.com/i/leaguelogos/soccer/500/23.png',
+    'esp.1': 'https://a.espncdn.com/i/leaguelogos/soccer/500/15.png',
+    'fra.1': 'https://a.espncdn.com/i/leaguelogos/soccer/500/9.png',
+    'ita.1': 'https://a.espncdn.com/i/leaguelogos/soccer/500/12.png',
+    'ger.1': 'https://a.espncdn.com/i/leaguelogos/soccer/500/10.png'
+  };
   let selectedFilter = 'all';
   let selectedLeague = 'all';
   let selectedView = 'matches';
@@ -154,6 +162,29 @@
 
   function iconMarkup(name, className = '') {
     return `<span class="svg-icon${className ? ` ${className}` : ''}" style="--svg-icon: url('/mini-app/icons/${name}.svg')" aria-hidden="true"></span>`;
+  }
+
+  function createLeagueLogo(leagueId, className) {
+    const logoUrl = leagueLogoUrls[leagueId];
+    if (!logoUrl) return null;
+    const image = document.createElement('img');
+    image.className = className;
+    image.src = logoUrl;
+    image.alt = '';
+    image.setAttribute('aria-hidden', 'true');
+    image.loading = 'lazy';
+    image.addEventListener('error', () => image.remove(), { once: true });
+    return image;
+  }
+
+  function setLeagueLabel(league) {
+    leagueSelectLabel.replaceChildren();
+    const logo = createLeagueLogo(league.id, 'league-inline-logo');
+    if (logo) leagueSelectLabel.append(logo);
+    const name = document.createElement('span');
+    name.className = 'league-select-name';
+    name.textContent = league.name;
+    leagueSelectLabel.append(name);
   }
 
   function showLoading() {
@@ -328,11 +359,17 @@
       option.setAttribute('role', 'option');
       option.setAttribute('aria-selected', String(league.id === selectedLeague));
       option.tabIndex = -1;
-      option.innerHTML = `<span class="league-option-mark">${league.id === selectedLeague ? iconMarkup('check') : ''}</span><span>${escapeHtml(league.name)}</span>`;
+      option.innerHTML = `<span class="league-option-mark">${league.id === selectedLeague ? iconMarkup('check') : ''}</span>`;
+      const logo = createLeagueLogo(league.id, 'league-option-logo');
+      if (logo) option.append(logo);
+      const name = document.createElement('span');
+      name.className = 'league-option-name';
+      name.textContent = league.name;
+      option.append(name);
       option.addEventListener('click', () => selectLeague(league));
       return option;
     }));
-    leagueSelectLabel.textContent = choices.find((league) => league.id === selectedLeague).name;
+    setLeagueLabel(choices.find((league) => league.id === selectedLeague));
     leagueSelectButton.setAttribute('aria-activedescendant', `league-option-${selectedLeague}`);
     leagueOptions.querySelector(`[data-league-id="${selectedLeague}"]`).classList.add('selected');
     leagueSelectButton.setAttribute('aria-expanded', String(!leagueOptions.hidden));
@@ -349,7 +386,7 @@
 
   function selectLeague(league) {
     selectedLeague = league.id;
-    leagueSelectLabel.textContent = league.name;
+    setLeagueLabel(league);
     updateLeagues(currentLeagues);
     setLeagueMenuOpen(false);
     leagueSelectButton.focus();
@@ -398,7 +435,11 @@
       const heading = document.createElement('div');
       heading.className = 'standings-heading';
       const title = document.createElement('h2');
-      title.textContent = table.leagueName;
+      const logo = createLeagueLogo(table.leagueId, 'league-heading-logo');
+      if (logo) title.append(logo);
+      const leagueName = document.createElement('span');
+      leagueName.textContent = table.leagueName;
+      title.append(leagueName);
       const teamCount = document.createElement('span');
       teamCount.textContent = `${table.teams.length} JAMOA`;
       heading.append(title, teamCount);
@@ -508,6 +549,8 @@
     const heading = document.createElement('div');
     heading.className = 'league-heading match-league-heading';
     const leagueName = document.createElement('span');
+    const logo = createLeagueLogo(event.leagueId, 'match-league-logo');
+    if (logo) heading.append(logo);
     leagueName.textContent = event.leagueName;
     heading.append(leagueName);
     const matchBell = notificationButton('match', event.id, `${event.home.name} — ${event.away.name}`, {
@@ -633,7 +676,7 @@
     detailLiveBadge.classList.toggle('live', event.state === 'in');
     matchDetailContent.innerHTML = `
       <section class="detail-hero">
-        <div class="detail-league">${escapeHtml(event.leagueName)}</div>
+        <div class="detail-league">${leagueLogoUrls[event.leagueId] ? `<img class="detail-league-logo" src="${escapeAttribute(leagueLogoUrls[event.leagueId])}" alt="" aria-hidden="true">` : ''}<span>${escapeHtml(event.leagueName)}</span></div>
         <div class="detail-scoreboard">
           <div class="detail-team">${teamLogo(event.home)}<strong>${escapeHtml(event.home.name)}</strong></div>
           <div class="detail-score">${score}</div>
@@ -971,7 +1014,7 @@
     });
     profileContent.innerHTML = `
       <section class="profile-card">
-        <div class="profile-banner" data-profile-theme="${themeIndex}" data-profile-pattern="${pattern.index}" style="--profile-pattern: ${pattern.image}">
+        <div class="profile-banner" data-profile-theme="${themeIndex}" data-profile-pattern="${pattern.index}" style="--profile-pattern: ${escapeAttribute(pattern.image)}">
           <div class="profile-identity">
             <div class="profile-avatar">${avatar}</div>
             <div class="profile-name">${escapeHtml(fullName)}</div>

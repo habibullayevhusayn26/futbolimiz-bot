@@ -139,6 +139,8 @@ h1 {
 }
 
 .controls {
+  position: relative;
+  z-index: 4;
   margin-bottom: 17px;
 }
 
@@ -245,6 +247,10 @@ h1 {
 }
 
 .standings-heading h2 {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
   overflow: hidden;
   margin: 0;
   font-size: 14px;
@@ -579,6 +585,34 @@ h1 {
   font-weight: 800;
   letter-spacing: .04em;
   text-transform: uppercase;
+}
+
+.league-heading-logo,
+.league-inline-logo,
+.league-option-logo,
+.detail-league-logo {
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
+.league-heading-logo {
+  width: 25px;
+  height: 25px;
+}
+
+.match-league-heading {
+  gap: 7px;
+}
+
+.match-league-logo {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  object-fit: contain;
+}
+
+.match-league-heading > span:not(.svg-icon) {
+  min-width: 0;
 }
 
 .league-heading:first-child {
@@ -1200,11 +1234,20 @@ h1 {
 }
 
 .detail-league {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   color: #536170;
   font-size: 11px;
   font-weight: 850;
   letter-spacing: .05em;
   text-transform: uppercase;
+}
+
+.detail-league-logo {
+  width: 22px;
+  height: 22px;
 }
 
 .detail-status {
@@ -1964,6 +2007,20 @@ h1 {
 }
 
 #league-select-label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+}
+
+.league-inline-logo {
+  width: 23px;
+  height: 23px;
+}
+
+.league-select-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2062,6 +2119,19 @@ h1 {
   background: rgba(255, 255, 255, .75);
   color: #1976d2;
   font-size: 12px;
+}
+
+.league-option-logo {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+}
+
+.league-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .league-option.selected .league-option-mark {
@@ -2341,6 +2411,15 @@ html[data-theme="dark"] .league-option-mark {
 html[data-theme="dark"] .league-option.selected .league-option-mark {
   background: var(--accent);
   color: #071522;
+}
+
+html[data-theme="dark"] .league-heading-logo,
+html[data-theme="dark"] .league-inline-logo,
+html[data-theme="dark"] .league-option-logo,
+html[data-theme="dark"] .match-league-logo,
+html[data-theme="dark"] .detail-league-logo {
+  border-radius: 50%;
+  background: #fff;
 }
 
 html[data-theme="dark"] .refresh-button,
