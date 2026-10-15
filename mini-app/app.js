@@ -7,6 +7,7 @@
 
   const list = document.getElementById('match-list');
   const statusMessage = document.getElementById('status-message');
+  const notificationHint = document.getElementById('notification-hint');
   const dateInput = document.getElementById('match-date');
   const matchControls = document.getElementById('match-controls');
   const liveBanner = document.querySelector('.live-banner');
@@ -16,6 +17,12 @@
   const leagueOptions = document.getElementById('league-options');
   const liveCount = document.getElementById('live-count');
   const updatedAt = document.getElementById('updated-at');
+  const dashboard = document.getElementById('dashboard-view');
+  const matchDetail = document.getElementById('match-detail');
+  const matchDetailContent = document.getElementById('match-detail-content');
+  const detailBackButton = document.getElementById('detail-back-button');
+  const detailCloseButton = document.getElementById('detail-close-button');
+  const detailLiveBadge = document.getElementById('detail-live-badge');
   let selectedFilter = 'all';
   let selectedLeague = 'all';
   let selectedView = 'matches';
@@ -23,8 +30,12 @@
   let currentEvents = [];
   let standingsRequestId = 0;
   let refreshTimer;
-  const requestedMatchId = new URLSearchParams(window.location.search).get('match');
+  let favoriteTeamIds = new Set();
+  let favoriteMatchIds = new Set();
   const requestedMatchDate = new URLSearchParams(window.location.search).get('date');
+  let activeDetailId = null;
+  let detailRequestId = 0;
+  let activeDetailTab = 'lineups';
 
   function localDateString(date) {
     const year = date.getFullYear();
@@ -70,6 +81,93 @@
     list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
   }
 
+  function updateNotificationHint() {
+    if (!telegram?.initData) {
+      notificationHint.textContent = 'Telegram orqali ochib, klub va o‘yin yonidagi qo‘ng‘iroqni bosing — bildirishnomalar tanlovingizga qarab yuboriladi.';
+      return;
+    }
+    const count = favoriteTeamIds.size + favoriteMatchIds.size;
+    notificationHint.textContent = count
+      ? `🔔 ${count} ta tanlov uchun o‘yin boshlanishi, gollar va yakuniy natija bildirishnomalari yoqilgan.`
+      : '🔔 Faqat tanlaganlaringiz haqida xabar olasiz. Klub yoki o‘yin yonidagi qo‘ng‘iroqni bosib obuna bo‘ling.';
+  }
+
+  async function loadNotificationPreferences() {
+    updateNotificationHint();
+    if (!telegram?.initData) return;
+    try {
+      const response = await fetch('/api/mini-app/notification-preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'get', initData: telegram.initData })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Bildirishnoma sozlamalarini yuklab bo‘lmadi.');
+      favoriteTeamIds = new Set(payload.favoriteTeamIds);
+      favoriteMatchIds = new Set(payload.favoriteMatchIds);
+      updateNotificationHint();
+      if (selectedView === 'standings') loadStandings();
+      else renderEvents();
+    } catch (error) {
+      console.error('Soccer notification preferences could not be loaded:', error);
+      setMessage(error.message || 'Bildirishnoma sozlamalarini yuklab bo‘lmadi.', 'error');
+    }
+  }
+
+  function notificationButton(kind, id, label) {
+    if (!telegram?.initData || !id) return null;
+    const enabled = (kind === 'team' ? favoriteTeamIds : favoriteMatchIds).has(id);
+    const button = document.createElement('button');
+    button.className = `notify-toggle${enabled ? ' active' : ''}`;
+    button.type = 'button';
+    button.dataset.kind = kind;
+    button.dataset.id = id;
+    button.setAttribute('aria-label', `${enabled ? 'Bildirishnomani o‘chirish' : 'Bildirishnomani yoqish'}: ${label}`);
+    button.setAttribute('aria-pressed', String(enabled));
+    button.title = enabled ? 'Bildirishnoma yoqilgan' : 'Bildirishnoma yoqish';
+    button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>';
+    button.addEventListener('click', () => toggleNotificationPreference(button, kind, id, label));
+    return button;
+  }
+
+  async function toggleNotificationPreference(button, kind, id, label) {
+    if (!telegram?.initData || button.disabled) return;
+    const selections = kind === 'team' ? favoriteTeamIds : favoriteMatchIds;
+    const enabled = !selections.has(id);
+    button.disabled = true;
+    try {
+      const response = await fetch('/api/mini-app/notification-preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'toggle', initData: telegram.initData, kind, id, enabled })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Bildirishnoma sozlamasini saqlab bo‘lmadi.');
+      favoriteTeamIds = new Set(payload.favoriteTeamIds);
+      favoriteMatchIds = new Set(payload.favoriteMatchIds);
+      document.querySelectorAll('.notify-toggle').forEach((toggle) => {
+        if (toggle.dataset.kind !== kind || toggle.dataset.id !== id) return;
+        const isEnabled = selectionsFor(toggle.dataset.kind).has(id);
+        toggle.classList.toggle('active', isEnabled);
+        toggle.setAttribute('aria-pressed', String(isEnabled));
+        toggle.setAttribute('aria-label', `${isEnabled ? 'Bildirishnomani o‘chirish' : 'Bildirishnomani yoqish'}: ${label}`);
+        toggle.title = isEnabled ? 'Bildirishnoma yoqilgan' : 'Bildirishnoma yoqish';
+      });
+      updateNotificationHint();
+      setMessage(enabled
+        ? `${label} uchun bildirishnomalar yoqildi.`
+        : `${label} uchun bildirishnomalar o‘chirildi.`, 'success');
+    } catch (error) {
+      setMessage(error.message || 'Bildirishnoma sozlamasini saqlab bo‘lmadi.', 'error');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function selectionsFor(kind) {
+    return kind === 'team' ? favoriteTeamIds : favoriteMatchIds;
+  }
+
   async function recordVisit() {
     if (!telegram?.initData) return;
     try {
@@ -97,6 +195,16 @@
       currentEvents = payload.events;
       updateLeagues(payload.leagues);
       if (selectedView === 'matches') renderEvents();
+      if (activeDetailId) {
+        const activeEvent = currentEvents.find((event) => event.id === activeDetailId);
+        if (activeEvent) loadMatchDetails(activeEvent);
+      }
+      const matchIdFromUrl = new URLSearchParams(window.location.search).get('match');
+      if (matchIdFromUrl && !activeDetailId) {
+        const requestedEvent = currentEvents.find((event) => event.id === matchIdFromUrl);
+        if (requestedEvent) openMatchDetail(requestedEvent, false);
+        else setMessage('Tanlangan o‘yin ro‘yxatda topilmadi. O‘yin yakunlangan yoki hozircha yangilanmagan bo‘lishi mumkin.', 'warning');
+      }
       updatedAt.textContent = `Yangilandi ${formattedTime(new Date().toISOString())}`;
       if (payload.partial && selectedView === 'matches') {
         setMessage('Ayrim musobaqalar ma’lumotini olib bo‘lmadi. Ko‘rsatilgan o‘yinlar mavjud ma’lumotlardan tuzildi.', 'warning');
@@ -232,6 +340,8 @@
           const teamName = document.createElement('span');
           teamName.textContent = team.name;
           teamCell.append(teamName);
+          const teamBell = notificationButton('team', team.id, team.name);
+          if (teamBell) teamCell.append(teamBell);
           name.append(teamCell);
           row.append(rank, name);
           const played = document.createElement('td');
@@ -275,6 +385,8 @@
       ? `<img class="team-logo" src="${escapeAttribute(team.logo)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'team-placeholder',textContent:'⚽'}))">`
       : '<span class="team-placeholder">⚽</span>';
     wrapper.innerHTML = `${logo}<span class="team-name">${escapeHtml(team.name)}</span>`;
+    const bell = notificationButton('team', team.id, team.name);
+    if (bell) wrapper.append(bell);
     return wrapper;
   }
 
@@ -282,9 +394,25 @@
     const card = document.createElement('article');
     card.className = `match-card${event.state === 'in' ? ' live' : ''}`;
     card.dataset.eventId = event.id;
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', `${event.home.name} — ${event.away.name}, o‘yin tafsilotlarini ochish`);
+    card.addEventListener('click', (clickEvent) => {
+      if (clickEvent.target.closest('button')) return;
+      openMatchDetail(event);
+    });
+    card.addEventListener('keydown', (keyEvent) => {
+      if (keyEvent.target !== card || (keyEvent.key !== 'Enter' && keyEvent.key !== ' ')) return;
+      keyEvent.preventDefault();
+      openMatchDetail(event);
+    });
     const heading = document.createElement('div');
-    heading.className = 'league-heading';
-    heading.innerHTML = `<span>${escapeHtml(event.leagueName)}</span>`;
+    heading.className = 'league-heading match-league-heading';
+    const leagueName = document.createElement('span');
+    leagueName.textContent = event.leagueName;
+    heading.append(leagueName);
+    const matchBell = notificationButton('match', event.id, `${event.home.name} — ${event.away.name}`);
+    if (matchBell) heading.append(matchBell);
     card.append(heading);
 
     const meta = document.createElement('div');
@@ -340,21 +468,257 @@
 
     for (const event of filteredEvents) {
       const card = eventMarkup(event);
-      if (requestedMatchId && event.id === requestedMatchId) {
-        card.classList.add('selected-match');
-      }
       list.append(card);
     }
-    if (requestedMatchId) {
-      const target = [...list.querySelectorAll('.match-card')]
-        .find((card) => card.dataset.eventId === requestedMatchId);
-      if (target) {
-        window.requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'center' }));
-      } else {
-        setMessage('Tanlangan o‘yin ro‘yxatda topilmadi. O‘yin yakunlangan yoki hozircha yangilanmagan bo‘lishi mumkin.', 'warning');
-      }
+  }
+
+  function openMatchDetail(event, addHistoryEntry = true) {
+    activeDetailId = event.id;
+    activeDetailTab = 'lineups';
+    dashboard.hidden = true;
+    matchDetail.hidden = false;
+    document.body.classList.add('detail-open');
+    matchDetailContent.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
+    if (addHistoryEntry) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('match', event.id);
+      url.searchParams.set('league', event.leagueId);
+      url.searchParams.set('date', dateInput.value);
+      window.history.pushState({ matchDetail: true }, '', url);
+    }
+    telegram?.BackButton?.show?.();
+    loadMatchDetails(event);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function loadMatchDetails(event) {
+    const requestId = ++detailRequestId;
+    try {
+      const params = new URLSearchParams({ league: event.leagueId, event: event.id });
+      const response = await fetch(`/api/mini-app/match-details?${params}`);
+      const details = await response.json();
+      if (!response.ok) throw new Error(details.error || 'O‘yin tafsilotlarini yuklab bo‘lmadi.');
+      if (requestId !== detailRequestId || activeDetailId !== event.id) return;
+      renderMatchDetail(event, details);
+    } catch (error) {
+      if (requestId !== detailRequestId || activeDetailId !== event.id) return;
+      matchDetailContent.innerHTML = `<div class="detail-error">${escapeHtml(error.message || 'O‘yin tafsilotlarini yuklab bo‘lmadi.')}</div>`;
     }
   }
+
+  function renderMatchDetail(event, details) {
+    const teamLogo = (team) => team.logo
+      ? `<img src="${escapeAttribute(team.logo)}" alt="" onerror="this.remove()">`
+      : '<span class="detail-team-placeholder">⚽</span>';
+    const score = event.state === 'pre' ? 'VS' : `${escapeHtml(event.home.score)} : ${escapeHtml(event.away.score)}`;
+    const stats = details.statistics || [];
+    const possession = stats.map((team) => ({
+      side: team.homeAway,
+      stat: team.stats.find((item) => /possession/i.test(item.name))
+    }));
+    const homePossession = possession.find((item) => item.side === 'home')?.stat?.value;
+    const awayPossession = possession.find((item) => item.side === 'away')?.stat?.value;
+    const hasPossession = homePossession !== undefined || awayPossession !== undefined;
+    const homePossessionValue = formatPossession(homePossession);
+    const awayPossessionValue = formatPossession(awayPossession);
+    const possessionTotal = parseFloat(homePossessionValue) + parseFloat(awayPossessionValue);
+    const homePossessionWidth = possessionTotal ? parseFloat(homePossessionValue) / possessionTotal * 100 : 50;
+    detailLiveBadge.textContent = event.state === 'in'
+      ? `${event.clock || event.status || 'JONLI'} · JONLI`
+      : event.state === 'post' ? 'YAKUNLANDI' : formattedTime(event.startTime);
+    detailLiveBadge.classList.toggle('live', event.state === 'in');
+    matchDetailContent.innerHTML = `
+      <section class="detail-hero">
+        <div class="detail-league">${escapeHtml(event.leagueName)}</div>
+        <div class="detail-scoreboard">
+          <div class="detail-team">${teamLogo(event.home)}<strong>${escapeHtml(event.home.name)}</strong></div>
+          <div class="detail-score">${score}</div>
+          <div class="detail-team away">${teamLogo(event.away)}<strong>${escapeHtml(event.away.name)}</strong></div>
+        </div>
+        <div class="detail-venue">${escapeHtml(event.venue || '')}${event.venue ? ' · ' : ''}${escapeHtml(formattedDate(event.startTime))}</div>
+      </section>
+      ${hasPossession ? `<section class="detail-possession" aria-label="To‘p nazorati">
+        <div><strong>TO‘P NAZORATI</strong><span>${homePossessionValue}% · ${awayPossessionValue}%</span></div>
+        <div class="possession-bar"><i style="width:${homePossessionWidth}%"></i><i style="width:${100 - homePossessionWidth}%"></i></div>
+      </section>` : ''}
+      <nav class="detail-tabs" role="tablist" aria-label="O‘yin tafsilotlari">
+        <button type="button" class="detail-tab${activeDetailTab === 'lineups' ? ' active' : ''}" role="tab" aria-selected="${activeDetailTab === 'lineups'}" data-detail-tab="lineups">Tarkiblar</button>
+        <button type="button" class="detail-tab${activeDetailTab === 'events' ? ' active' : ''}" role="tab" aria-selected="${activeDetailTab === 'events'}" data-detail-tab="events">Hodisalar</button>
+        <button type="button" class="detail-tab${activeDetailTab === 'statistics' ? ' active' : ''}" role="tab" aria-selected="${activeDetailTab === 'statistics'}" data-detail-tab="statistics">Statistika</button>
+        <button type="button" class="detail-tab${activeDetailTab === 'goals' ? ' active' : ''}" role="tab" aria-selected="${activeDetailTab === 'goals'}" data-detail-tab="goals">⚽ Gollar</button>
+      </nav>
+      <section class="detail-panel${activeDetailTab === 'lineups' ? ' active' : ''}" role="tabpanel" data-detail-panel="lineups" ${activeDetailTab !== 'lineups' ? 'hidden' : ''}>
+        ${renderLineups(details.lineups || [], event)}
+      </section>
+      <section class="detail-panel${activeDetailTab === 'events' ? ' active' : ''}" role="tabpanel" data-detail-panel="events" ${activeDetailTab !== 'events' ? 'hidden' : ''}>
+        ${renderMatchTimeline(details.events || [], event)}
+      </section>
+      <section class="detail-panel${activeDetailTab === 'statistics' ? ' active' : ''}" role="tabpanel" data-detail-panel="statistics" ${activeDetailTab !== 'statistics' ? 'hidden' : ''}>
+        ${renderMatchStatistics(stats, event)}
+      </section>
+      <section class="detail-panel${activeDetailTab === 'goals' ? ' active' : ''}" role="tabpanel" data-detail-panel="goals" ${activeDetailTab !== 'goals' ? 'hidden' : ''}>
+        ${renderMatchTimeline((details.events || []).filter(isGoalEvent), event, 'Ushbu o‘yinda gol qayd etilmagan.')}
+      </section>
+    `;
+  }
+
+  function isGoalEvent(item) {
+    return /goal|penalty scored|own goal/i.test(`${item.type} ${item.text}`);
+  }
+
+  function renderMatchTimeline(events, match, emptyMessage = 'O‘yin hodisalari hozircha mavjud emas.') {
+    if (!events.length) return `<p class="detail-empty">${escapeHtml(emptyMessage)}</p>`;
+    const teamIds = { home: match.home.id, away: match.away.id };
+    return `<ol class="match-timeline">${events.map((item) => {
+      const side = item.teamId === teamIds.home ? 'home' : item.teamId === teamIds.away ? 'away' : '';
+      const heading = item.type ? `<strong>${escapeHtml(item.type)}</strong>` : '';
+      const clock = item.clock ? `<time>${escapeHtml(item.clock)}</time>` : '';
+      const athletes = item.athletes?.length ? `<span class="timeline-athletes">${escapeHtml(item.athletes.join(', '))}</span>` : '';
+      return `<li class="timeline-event ${side}">${clock}<div>${heading}<span>${escapeHtml(item.text)}</span>${athletes}</div></li>`;
+    }).join('')}</ol>`;
+  }
+
+  function formatPossession(value) {
+    const number = Number.parseFloat(String(value ?? '').replace('%', ''));
+    return Number.isFinite(number) ? String(number) : '0';
+  }
+
+  function formattedDate(value) {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'Asia/Tashkent'
+    }).formatToParts(new Date(value));
+    const values = Object.fromEntries(parts.map(({ type, value: part }) => [type, part]));
+    return `${values.day} ${values.month} ${values.year}`;
+  }
+
+  function renderLineups(lineups, match) {
+    const available = lineups.filter((lineup) => lineup?.players?.length);
+    if (!available.length) return '<p class="detail-empty">Tarkiblar hali e’lon qilinmagan yoki ESPN’da mavjud emas.</p>';
+    return `<div class="lineups">${['home', 'away'].map((side) => {
+      const lineup = lineups.find((item) => item?.homeAway === side);
+      const team = match[side];
+      if (!lineup?.players?.length) {
+        return `<div class="lineup-team"><h3>${escapeHtml(team.name)}</h3><p class="detail-empty">Tarkib hali mavjud emas.</p></div>`;
+      }
+      const starters = lineup.players.filter((player) => player.starter);
+      const players = starters.length ? starters : lineup.players;
+      const rows = lineupRows(players, lineup.formation);
+      return `<div class="lineup-team"><h3>${escapeHtml(lineup.teamName || team.name)}</h3>
+        <div class="formation-label">${lineup.formation ? `Tuzilish ${escapeHtml(lineup.formation)}` : starters.length ? 'Asosiy tarkib' : 'Tarkib'}</div>
+        <div class="football-pitch">${rows.map((row) => `<div class="pitch-row">${row.map((player) => `<span class="pitch-player"><i>${escapeHtml(player.jersey || player.position || '•')}</i><span>${escapeHtml(player.name)}</span></span>`).join('')}</div>`).join('')}</div>
+      </div>`;
+    }).join('')}</div>`;
+  }
+
+  function lineupRows(players, formation) {
+    players.sort((left, right) => Number(left.formationPlace || 99) - Number(right.formationPlace || 99));
+    const byPosition = [
+      players.filter((player) => /gk|goalkeeper/i.test(player.position)),
+      players.filter((player) => /def|back/i.test(player.position)),
+      players.filter((player) => /mid|cent/i.test(player.position)),
+      players.filter((player) => /forw|forward|att|strik/i.test(player.position))
+    ];
+    const recognized = byPosition.flat();
+    if (recognized.length >= Math.min(5, players.length)) {
+      const remaining = players.filter((player) => !recognized.includes(player));
+      return byPosition.filter((row) => row.length).map((row, index) =>
+        index === byPosition.filter((item) => item.length).length - 1 ? [...row, ...remaining] : row
+      );
+    }
+    const formationRows = String(formation || '').split('-').map(Number).filter((count) => count > 0);
+    if (formationRows.length && players.length >= formationRows.reduce((sum, count) => sum + count, 0)) {
+      const rows = [players.slice(0, 1)];
+      let offset = 1;
+      for (const count of formationRows) {
+        rows.push(players.slice(offset, offset + count));
+        offset += count;
+      }
+      if (players.length > offset) rows.push(players.slice(offset));
+      return rows.filter((row) => row.length);
+    }
+    return [players];
+  }
+
+  function statisticLabel(value) {
+    const label = String(value);
+    if (/possession/i.test(label)) return 'To‘p nazorati';
+    if (/accurate|completed/i.test(label) && /pass/i.test(label)) return 'Aniq paslar';
+    if (/pass completion/i.test(label)) return 'Pas aniqligi';
+    if (/pass/i.test(label)) return 'Paslar';
+    if (/cross/i.test(label)) return /accurate/i.test(label) ? 'Aniq krosslar' : 'Krosslar';
+    if (/shots? on target/i.test(label)) return 'Darvozaga aniq zarbalar';
+    if (/shots?/i.test(label)) return 'Zarbalar';
+    if (/corner/i.test(label)) return 'Burchak zarbalari';
+    if (/foul/i.test(label)) return 'Qoidabuzarliklar';
+    if (/yellow card/i.test(label)) return 'Sariq kartochkalar';
+    if (/red card/i.test(label)) return 'Qizil kartochkalar';
+    if (/save/i.test(label)) return 'Darvozabon seyvlar';
+    if (/offside/i.test(label)) return 'Ofsaydlar';
+    if (/tackle/i.test(label)) return /effective/i.test(label) ? 'To‘pni olib qo‘yish' : 'Podkatlar';
+    if (/interception/i.test(label)) return 'To‘pni ushlab qolish';
+    if (/clearance/i.test(label)) return 'To‘pni qaytarish';
+    return label;
+  }
+
+  function renderMatchStatistics(statistics, match) {
+    const homeStats = statistics.find((item) => item.homeAway === 'home')?.stats || [];
+    const awayStats = statistics.find((item) => item.homeAway === 'away')?.stats || [];
+    if (!homeStats.length && !awayStats.length) return '<p class="detail-empty">O‘yin statistikasi hozircha mavjud emas.</p>';
+    const stats = new Map();
+    for (const stat of homeStats) stats.set(stat.name, { home: stat.value, away: '' });
+    for (const stat of awayStats) {
+      const values = stats.get(stat.name) || { home: '', away: '' };
+      values.away = stat.value;
+      stats.set(stat.name, values);
+    }
+    return `<div class="stats-header"><span>${escapeHtml(match.home.name)}</span><span>${escapeHtml(match.away.name)}</span></div>
+      <div class="match-statistics">${[...stats].map(([name, values]) => {
+        const homeNumber = Number.parseFloat(String(values.home).replace('%', '')) || 0;
+        const awayNumber = Number.parseFloat(String(values.away).replace('%', '')) || 0;
+        const total = homeNumber + awayNumber;
+        const homeWidth = total ? Math.round(homeNumber / total * 100) : 50;
+        return `<div class="match-stat"><div class="stat-values"><strong>${escapeHtml(values.home || '—')}</strong><span>${escapeHtml(statisticLabel(name))}</span><strong>${escapeHtml(values.away || '—')}</strong></div><div class="stat-bar"><i style="width:${homeWidth}%"></i><i style="width:${100 - homeWidth}%"></i></div></div>`;
+      }).join('')}</div>`;
+  }
+
+  function closeMatchDetail() {
+    activeDetailId = null;
+    detailRequestId += 1;
+    matchDetail.hidden = true;
+    dashboard.hidden = false;
+    document.body.classList.remove('detail-open');
+    telegram?.BackButton?.hide?.();
+  }
+
+  function goBackFromDetail() {
+    if (window.history.state?.matchDetail) window.history.back();
+    else {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('match');
+      url.searchParams.delete('league');
+      window.history.replaceState({}, '', url);
+      closeMatchDetail();
+    }
+  }
+
+  matchDetailContent.addEventListener('click', (event) => {
+    const tab = event.target.closest('[data-detail-tab]');
+    if (!tab) return;
+    activeDetailTab = tab.dataset.detailTab;
+    matchDetailContent.querySelectorAll('[data-detail-tab]').forEach((button) => {
+      const active = button === tab;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+    });
+    matchDetailContent.querySelectorAll('[data-detail-panel]').forEach((panel) => {
+      const active = panel.dataset.detailPanel === activeDetailTab;
+      panel.hidden = !active;
+      panel.classList.toggle('active', active);
+    });
+  });
 
   function escapeHtml(value) {
     return String(value).replace(/[&<>"']/g, (character) => ({
@@ -426,6 +790,19 @@
     loadScoreboard();
   });
   document.getElementById('refresh-button').addEventListener('click', loadScoreboard);
+  detailBackButton.addEventListener('click', goBackFromDetail);
+  detailCloseButton.addEventListener('click', goBackFromDetail);
+  telegram?.BackButton?.onClick?.(goBackFromDetail);
+  window.addEventListener('popstate', () => {
+    const matchId = new URLSearchParams(window.location.search).get('match');
+    if (!matchId) {
+      if (activeDetailId) closeMatchDetail();
+      return;
+    }
+    const event = currentEvents.find((item) => item.id === matchId);
+    if (event) openMatchDetail(event, false);
+    else loadScoreboard();
+  });
   document.querySelectorAll('.filter-tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       selectedFilter = tab.dataset.filter;
@@ -437,6 +814,7 @@
   });
 
   recordVisit();
+  loadNotificationPreferences();
   loadScoreboard();
   refreshTimer = window.setInterval(() => {
     if (isToday(dateInput.value)) loadScoreboard();

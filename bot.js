@@ -14,6 +14,8 @@ const userSchema = new mongoose.Schema({
   telegramId: { type: Number, unique: true, required: true, index: true },
   username: { type: String, default: '' },
   nickname: { type: String, default: '' },
+  favoriteSoccerTeamIds: { type: [String], default: [] },
+  favoriteSoccerMatchIds: { type: [String], default: [] },
   joinedAt: { type: Date, default: Date.now },
   lastActiveAt: { type: Date, default: Date.now }
 }, { versionKey: false });
@@ -98,6 +100,14 @@ const soccerMatchNotificationSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now }
 }, { versionKey: false });
 
+const soccerMatchStateSchema = new mongoose.Schema({
+  eventKey: { type: String, unique: true, required: true },
+  state: { type: String, required: true },
+  homeScore: { type: String, default: '' },
+  awayScore: { type: String, default: '' },
+  updatedAt: { type: Date, default: Date.now }
+}, { versionKey: false });
+
 const botConfigSchema = new mongoose.Schema({
   configKey: { type: String, default: 'main_config', unique: true },
   channels: { type: Array, default: [] },
@@ -116,6 +126,8 @@ const JoinRequestLinkCode = mongoose.models.JoinRequestLinkCode || mongoose.mode
 const MiniAppVisit = mongoose.models.MiniAppVisit || mongoose.model('MiniAppVisit', miniAppVisitSchema);
 const SoccerMatchNotification = mongoose.models.SoccerMatchNotification ||
   mongoose.model('SoccerMatchNotification', soccerMatchNotificationSchema);
+const SoccerMatchState = mongoose.models.SoccerMatchState ||
+  mongoose.model('SoccerMatchState', soccerMatchStateSchema);
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -161,8 +173,11 @@ const soccerScoreboardCache = new Map();
 const soccerScoreboardRequests = new Map();
 const soccerStandingsCache = new Map();
 const soccerStandingsRequests = new Map();
+const soccerMatchDetailsCache = new Map();
+const soccerMatchDetailsRequests = new Map();
 const scoreboardCacheTtlMs = 30_000;
 const standingsCacheTtlMs = 5 * 60_000;
+const matchDetailsCacheTtlMs = 30_000;
 const soccerMatchNotificationPollMs = 30_000;
 const scoreboardDatePattern = /^\d{8}$/;
 let soccerMatchNotificationTimer;
@@ -197,17 +212,117 @@ function normalizeSoccerEvent(event, league) {
     status: status.shortDetail || status.detail || status.description || '',
     clock: competition.status?.displayClock || '',
     home: {
+      id: String(home.team.id || home.id || ''),
       name: home.team.displayName || home.team.name || '',
       logo: home.team.logo || '',
       score: home.score ?? ''
     },
     away: {
+      id: String(away.team.id || away.id || ''),
       name: away.team.displayName || away.team.name || '',
       logo: away.team.logo || '',
       score: away.score ?? ''
     },
     venue: competition.venue?.fullName || ''
   };
+}
+
+function normalizeSoccerMatchDetails(payload) {
+  const boxscore = payload.boxscore || {};
+  const rawPlays = Array.isArray(payload.plays) && payload.plays.length
+    ? payload.plays
+    : Array.isArray(payload.keyEvents) && payload.keyEvents.length
+      ? payload.keyEvents
+      : payload.commentary?.items || [];
+  const matchStatPattern = /possession|pass|shot|corner|foul|card|save|offside|tackle|interception|cross|clearance|block|dribble|touch|duel/i;
+  const getTeamName = (team) => team?.team?.displayName || team?.team?.name || '';
+  const getPlayers = (roster) => (roster.roster || roster.athletes || [])
+    .map((entry) => {
+      const athlete = entry?.athlete || entry;
+      if (!athlete) return null;
+      const starterStat = (Array.isArray(entry?.stats) ? entry.stats : []).find((stat) => stat.name === 'starter');
+      const starterValue = starterStat?.value ?? starterStat?.displayValue;
+      return {
+        name: athlete.displayName || athlete.fullName || athlete.shortName || '',
+        position: entry?.position?.abbreviation || entry?.position?.displayName ||
+          athlete.position?.abbreviation || athlete.position?.displayName || athlete.position || '',
+        jersey: entry?.jersey || athlete.jersey || '',
+        formationPlace: entry?.formationPlace || '',
+        starter: entry?.starter === true || entry?.starter === 1 || athlete.starter === true ||
+          starterValue === true || starterValue === 1 || starterValue === '1'
+      };
+    })
+    .filter((player) => player?.name);
+  const rosters = (payload.rosters || []).map((roster) => ({
+    homeAway: roster.homeAway || '',
+    teamName: getTeamName(roster),
+    formation: roster.formation || roster.team?.formation || '',
+    players: getPlayers(roster)
+  }));
+  for (const team of boxscore.players || []) {
+    if (rosters.some((roster) => roster.homeAway === team.homeAway)) continue;
+    rosters.push({
+      homeAway: team.homeAway || '',
+      teamName: getTeamName(team),
+      formation: team.formation || '',
+      players: getPlayers(team)
+    });
+  }
+  const teams = boxscore.teams || [];
+  return {
+    events: rawPlays
+      .map((item) => {
+        const play = item.play || item;
+        return {
+          clock: play.clock?.displayValue || item.clock?.displayValue || item.time?.displayValue ||
+            (typeof play.clock === 'string' ? play.clock : '') ||
+            (typeof item.time === 'string' ? item.time : ''),
+          type: typeof play.type === 'string' ? play.type : play.type?.text || play.type?.name || '',
+          text: play.text || item.text || play.shortText || play.description || '',
+          teamId: String(play.team?.id || item.team?.id || ''),
+          athletes: (play.participants || item.participants || play.athletes || item.athletes || [])
+            .map((participant) => participant?.athlete?.displayName || participant?.displayName || participant?.name || '')
+            .filter(Boolean)
+        };
+      })
+      .filter((play) => (play.text || play.type) &&
+        /goal|substitut|yellow|red card|penalty|kick.?off|half|match ends|offside|corner|save|injur|var|shoot.?out|extra time/i
+          .test(`${play.type} ${play.text}`)),
+    lineups: rosters,
+    statistics: teams.map((team) => ({
+      homeAway: team.homeAway || '',
+      teamName: getTeamName(team),
+      stats: (team.statistics || [])
+        .map((stat) => ({
+          name: stat.label || stat.name || '',
+          value: stat.displayValue ?? stat.value ?? ''
+        }))
+        .filter((stat) => stat.name && String(stat.value) !== '' && matchStatPattern.test(stat.name))
+    }))
+  };
+}
+
+async function fetchSoccerMatchDetails(leagueId, eventId, fetchImpl = fetch) {
+  const league = soccerLeagues.find((item) => item.id === leagueId);
+  if (!league) throw new Error('Noma’lum musobaqa tanlandi.');
+  if (!/^[A-Za-z0-9_-]{1,30}$/.test(eventId)) throw new Error('O‘yin ID noto‘g‘ri.');
+  const cacheKey = `${leagueId}:${eventId}`;
+  const cached = soccerMatchDetailsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+  const pending = soccerMatchDetailsRequests.get(cacheKey);
+  if (pending) return pending;
+
+  const request = (async () => {
+    const url = new URL(`https://site.api.espn.com/apis/site/v2/sports/soccer/${league.id}/summary`);
+    url.searchParams.set('event', eventId);
+    const response = await fetchImpl(url, { signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) throw new Error(`ESPN ${response.status} (${league.id}/${eventId})`);
+    const data = normalizeSoccerMatchDetails(await response.json());
+    soccerMatchDetailsCache.set(cacheKey, { data, expiresAt: Date.now() + matchDetailsCacheTtlMs });
+    return data;
+  })().finally(() => soccerMatchDetailsRequests.delete(cacheKey));
+  soccerMatchDetailsRequests.set(cacheKey, request);
+  return request;
 }
 
 function normalizeSoccerStandings(events, league, season) {
@@ -238,7 +353,7 @@ function normalizeSoccerStandings(events, league, season) {
       const id = competitor.team.id || competitor.id;
       if (!teams.has(id)) {
         teams.set(id, {
-          id,
+          id: String(id),
           name: competitor.team.displayName || competitor.team.name || '',
           logo: competitor.team.logo || '',
           played: 0,
@@ -428,6 +543,7 @@ function getMatchMiniAppUrl(event) {
   const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
   const url = new URL(getMiniAppUrl());
   url.searchParams.set('match', String(event.id));
+  if (event.leagueId) url.searchParams.set('league', String(event.leagueId));
   url.searchParams.set('date', `${values.year}-${values.month}-${values.day}`);
   return url.toString();
 }
@@ -447,87 +563,151 @@ function formattedMatchTime(value) {
   }).format(new Date(value));
 }
 
-async function notifyStartedSoccerMatches(events) {
-  const startedEvents = events.filter((event) =>
-    event.state === 'in' && event.id && event.leagueId &&
-    event.home?.name && event.away?.name
-  );
-  if (!startedEvents.length) return;
-  const users = await User.find({}, { telegramId: 1 }).lean();
-  if (!users.length) return;
+function getSoccerMatchKey(event) {
+  return `${event.leagueId}:${event.id}`;
+}
 
-  for (const event of startedEvents) {
-    const eventKey = `${event.leagueId}:${event.id}`;
-    const text = [
-      `🔴 <b>O‘yin boshlandi!</b>`,
-      ``,
-      `<b>${escapeHtml(event.home.name)} — ${escapeHtml(event.away.name)}</b>`,
-      `${escapeHtml(event.leagueName)} · ${escapeHtml(event.status || 'Jonli efir')}`,
-      `Hisob: ${escapeHtml(event.home.score || '0')} : ${escapeHtml(event.away.score || '0')}`
-    ].join('\n');
-    const replyMarkup = Markup.inlineKeyboard([[
-      Markup.button.webApp('⚽ O‘yin ma’lumotlari', getMatchMiniAppUrl(event))
-    ]]).reply_markup;
+function getSoccerMatchSubscribers(event) {
+  const teamIds = [event.home.id, event.away.id].filter(Boolean);
+  const matchIds = [String(event.id)];
+  return User.find({
+    $or: [
+      { favoriteSoccerTeamIds: { $in: teamIds } },
+      { favoriteSoccerMatchIds: { $in: matchIds } }
+    ]
+  }, {
+    telegramId: 1,
+    favoriteSoccerTeamIds: 1,
+    favoriteSoccerMatchIds: 1
+  }).lean();
+}
 
-    let notification;
+function isSubscribedToSoccerMatch(user, event) {
+  const teamIds = new Set(user.favoriteSoccerTeamIds || []);
+  const matchIds = new Set(user.favoriteSoccerMatchIds || []);
+  return teamIds.has(event.home.id) || teamIds.has(event.away.id) ||
+    matchIds.has(String(event.id));
+}
+
+function getSoccerMatchNotificationPhase(previous, event) {
+  if (event.state === 'in' && previous?.state !== 'in') return 'start';
+  if (event.state === 'in' && previous?.state === 'in' &&
+      (String(event.home.score ?? '') !== previous.homeScore ||
+        String(event.away.score ?? '') !== previous.awayScore)) {
+    return `score:${String(event.home.score ?? '')}:${String(event.away.score ?? '')}`;
+  }
+  if (event.state === 'post' && previous?.state === 'in') return 'final';
+  return null;
+}
+
+async function sendSoccerMatchNotification(event, phase, heading) {
+  const recipients = (await getSoccerMatchSubscribers(event))
+    .filter((user) => isSubscribedToSoccerMatch(user, event));
+  if (!recipients.length) return;
+
+  const eventKey = `${getSoccerMatchKey(event)}:${phase}`;
+  let notification;
+  try {
+    notification = await SoccerMatchNotification.findOneAndUpdate(
+      { eventKey },
+      { $setOnInsert: { eventKey } },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+    ).lean();
+  } catch (error) {
+    if (error.code === 11000) notification = await SoccerMatchNotification.findOne({ eventKey }).lean();
+    else throw error;
+  }
+  if (!notification) throw new Error(`Could not load live match notification record ${eventKey}.`);
+  if (notification.completed) return;
+
+  const deliveredUserIds = new Set(notification.deliveredUserIds || []);
+  const blockedUserIds = new Set(notification.blockedUserIds || []);
+  const text = [
+    `${heading}`,
+    ``,
+    `<b>${escapeHtml(event.home.name)} — ${escapeHtml(event.away.name)}</b>`,
+    `${escapeHtml(event.leagueName)} · ${escapeHtml(event.status || 'Jonli efir')}`,
+    `Hisob: ${escapeHtml(event.home.score || '0')} : ${escapeHtml(event.away.score || '0')}`
+  ].join('\n');
+  const replyMarkup = Markup.inlineKeyboard([[
+    Markup.button.webApp('⚽ O‘yin ma’lumotlari', getMatchMiniAppUrl(event))
+  ]]).reply_markup;
+
+  let deliveredThisPass = 0;
+  let failedThisPass = 0;
+  for (const user of recipients) {
+    if (deliveredUserIds.has(user.telegramId) || blockedUserIds.has(user.telegramId)) continue;
     try {
-      notification = await SoccerMatchNotification.findOneAndUpdate(
-        { eventKey },
-        { $setOnInsert: { eventKey } },
-        { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
-      ).lean();
-    } catch (error) {
-      if (error.code === 11000) {
-        notification = await SoccerMatchNotification.findOne({ eventKey }).lean();
-      } else {
-        throw error;
-      }
-    }
-    if (!notification) throw new Error(`Could not load live match notification record ${eventKey}.`);
-    if (notification.completed) continue;
-
-    const deliveredUserIds = new Set(notification.deliveredUserIds || []);
-    const blockedUserIds = new Set(notification.blockedUserIds || []);
-    let deliveredThisPass = 0;
-    let failedThisPass = 0;
-    for (const user of users) {
-      if (deliveredUserIds.has(user.telegramId) || blockedUserIds.has(user.telegramId)) continue;
-      try {
-        await bot.telegram.sendMessage(user.telegramId, text, {
-          parse_mode: 'HTML',
-          protect_content: true,
-          reply_markup: replyMarkup
-        });
-        await SoccerMatchNotification.updateOne(
-          { eventKey },
-          { $addToSet: { deliveredUserIds: user.telegramId }, $set: { updatedAt: new Date() } }
-        );
-        deliveredUserIds.add(user.telegramId);
-        deliveredThisPass += 1;
-      } catch (error) {
-        failedThisPass += 1;
-        if ([400, 403].includes(error.response?.error_code)) {
-          await SoccerMatchNotification.updateOne(
-            { eventKey },
-            { $addToSet: { blockedUserIds: user.telegramId }, $set: { updatedAt: new Date() } }
-          );
-          blockedUserIds.add(user.telegramId);
-        }
-        console.error(`Live match notification ${eventKey} to ${user.telegramId} failed:`, error.response?.description || error.message);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-
-    const completed = users.every((user) =>
-      deliveredUserIds.has(user.telegramId) || blockedUserIds.has(user.telegramId)
-    );
-    if (completed) {
+      await bot.telegram.sendMessage(user.telegramId, text, {
+        parse_mode: 'HTML',
+        protect_content: true,
+        reply_markup: replyMarkup
+      });
       await SoccerMatchNotification.updateOne(
         { eventKey },
-        { $set: { completed: true, updatedAt: new Date() } }
+        { $addToSet: { deliveredUserIds: user.telegramId }, $set: { updatedAt: new Date() } }
       );
+      deliveredUserIds.add(user.telegramId);
+      deliveredThisPass += 1;
+    } catch (error) {
+      failedThisPass += 1;
+      if ([400, 403].includes(error.response?.error_code)) {
+        await SoccerMatchNotification.updateOne(
+          { eventKey },
+          { $addToSet: { blockedUserIds: user.telegramId }, $set: { updatedAt: new Date() } }
+        );
+        blockedUserIds.add(user.telegramId);
+      }
+      console.error(`Live match notification ${eventKey} to ${user.telegramId} failed:`, error.response?.description || error.message);
     }
-    console.log(`Live match notification ${eventKey}: delivered=${deliveredThisPass}, failed=${failedThisPass}, complete=${completed}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  const completed = recipients.every((user) =>
+    deliveredUserIds.has(user.telegramId) || blockedUserIds.has(user.telegramId)
+  );
+  if (completed) {
+    await SoccerMatchNotification.updateOne(
+      { eventKey },
+      { $set: { completed: true, updatedAt: new Date() } }
+    );
+  }
+  console.log(`Live match notification ${eventKey}: delivered=${deliveredThisPass}, failed=${failedThisPass}, complete=${completed}`);
+}
+
+async function notifySoccerMatchUpdates(events) {
+  const validEvents = events.filter((event) =>
+    event.state && event.id && event.leagueId &&
+    event.home?.id && event.away?.id && event.home?.name && event.away?.name
+  );
+
+  for (const event of validEvents) {
+    const eventKey = getSoccerMatchKey(event);
+    const previous = await SoccerMatchState.findOne({ eventKey }).lean();
+    const currentHomeScore = String(event.home.score ?? '');
+    const currentAwayScore = String(event.away.score ?? '');
+    const phase = getSoccerMatchNotificationPhase(previous, event);
+
+    if (phase === 'start') {
+      await sendSoccerMatchNotification(event, 'start', '🔴 <b>O‘yin boshlandi!</b>');
+    } else if (phase?.startsWith('score:')) {
+      await sendSoccerMatchNotification(event, phase, '⚽ <b>Hisob o‘zgardi!</b>');
+    } else if (phase === 'final') {
+      await sendSoccerMatchNotification(event, 'final', '🏁 <b>O‘yin yakunlandi!</b>');
+    }
+
+    await SoccerMatchState.findOneAndUpdate(
+      { eventKey },
+      {
+        $set: {
+          state: event.state,
+          homeScore: currentHomeScore,
+          awayScore: currentAwayScore,
+          updatedAt: new Date()
+        }
+      },
+      { upsert: true, setDefaultsOnInsert: true }
+    );
   }
 }
 
@@ -536,7 +716,7 @@ async function pollStartedSoccerMatches() {
   soccerMatchNotificationPollRunning = true;
   try {
     const scoreboard = await fetchSoccerScoreboard(getTashkentScoreboardDate());
-    await notifyStartedSoccerMatches(scoreboard.events);
+    await notifySoccerMatchUpdates(scoreboard.events);
   } catch (error) {
     console.error('Live match notification polling failed:', error.message);
   } finally {
@@ -565,6 +745,23 @@ app.get('/api/mini-app/scoreboard', async (req, res) => {
   } catch (error) {
     console.error('Soccer scoreboard request failed:', error.message);
     return res.status(502).json({ ok: false, error: 'O\'yinlar ma\'lumotini olib bo\'lmadi. Keyinroq qayta urinib ko\'ring.' });
+  }
+});
+
+app.get('/api/mini-app/match-details', async (req, res) => {
+  const leagueId = String(req.query.league || '');
+  const eventId = String(req.query.event || '');
+  if (!soccerLeagues.some((league) => league.id === leagueId)) {
+    return res.status(400).json({ ok: false, error: 'Tanlangan musobaqa mavjud emas.' });
+  }
+  if (!/^[A-Za-z0-9_-]{1,30}$/.test(eventId)) {
+    return res.status(400).json({ ok: false, error: 'O‘yin ID noto‘g‘ri.' });
+  }
+  try {
+    return res.status(200).json(await fetchSoccerMatchDetails(leagueId, eventId));
+  } catch (error) {
+    console.error('Soccer match details request failed:', error.message);
+    return res.status(502).json({ ok: false, error: 'O‘yin tafsilotlarini olib bo‘lmadi. Keyinroq qayta urinib ko‘ring.' });
   }
 });
 
@@ -655,6 +852,52 @@ app.post('/api/mini-app/visit', async (req, res) => {
   } catch (error) {
     console.error('Mini App visit tracking failed:', error);
     return res.status(500).json({ ok: false, error: 'Mini App visit could not be recorded.' });
+  }
+});
+
+app.post('/api/mini-app/notification-preferences', async (req, res) => {
+  const verified = verifyMiniAppInitData(req.body?.initData);
+  if (!verified) return res.status(401).json({ ok: false, error: 'Telegram foydalanuvchisi tasdiqlanmadi.' });
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ ok: false, error: 'Bildirishnoma sozlamalarini saqlash xizmati ishlamayapti.' });
+  }
+
+  const action = req.body?.action;
+  try {
+    if (action === 'get') {
+      const user = await User.findOne(
+        { telegramId: verified.user.id },
+        { favoriteSoccerTeamIds: 1, favoriteSoccerMatchIds: 1 }
+      ).lean();
+      return res.status(200).json({
+        favoriteTeamIds: user?.favoriteSoccerTeamIds || [],
+        favoriteMatchIds: user?.favoriteSoccerMatchIds || []
+      });
+    }
+    if (action !== 'toggle' ||
+        !['team', 'match'].includes(req.body?.kind) ||
+        typeof req.body?.id !== 'string' ||
+        !/^[a-zA-Z0-9._-]{1,64}$/.test(req.body.id) ||
+        typeof req.body?.enabled !== 'boolean') {
+      return res.status(400).json({ ok: false, error: 'Bildirishnoma tanlovi noto‘g‘ri.' });
+    }
+
+    const field = req.body.kind === 'team' ? 'favoriteSoccerTeamIds' : 'favoriteSoccerMatchIds';
+    const update = req.body.enabled
+      ? { $addToSet: { [field]: req.body.id }, $setOnInsert: { telegramId: verified.user.id } }
+      : { $pull: { [field]: req.body.id }, $setOnInsert: { telegramId: verified.user.id } };
+    const user = await User.findOneAndUpdate(
+      { telegramId: verified.user.id },
+      update,
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+    ).lean();
+    return res.status(200).json({
+      favoriteTeamIds: user.favoriteSoccerTeamIds || [],
+      favoriteMatchIds: user.favoriteSoccerMatchIds || []
+    });
+  } catch (error) {
+    console.error('Soccer notification preference update failed:', error);
+    return res.status(500).json({ ok: false, error: 'Bildirishnoma sozlamasini saqlab bo‘lmadi.' });
   }
 });
 
@@ -3056,7 +3299,10 @@ async function startBot() {
   await mongoose.connect(config.mongoUri, {
     serverSelectionTimeoutMS: 10000
   });
-  await SoccerMatchNotification.init();
+  await Promise.all([
+    SoccerMatchNotification.init(),
+    SoccerMatchState.init()
+  ]);
 
   const server = app.listen(port, '0.0.0.0', () => {
     console.log(`Express server ${port} portda ishlayapti.`);
@@ -3085,14 +3331,18 @@ module.exports = {
   checkFullAdmin,
   createRequiredChatPickerKeyboard,
   fetchSoccerScoreboard,
+  fetchSoccerMatchDetails,
   fetchSoccerStandings,
   getMiniAppUrl,
   getMatchMiniAppUrl,
   findNextScheduledSoccerMatch,
+  getSoccerMatchNotificationPhase,
+  isSubscribedToSoccerMatch,
   editCallbackMessage,
   isValidScoreboardDate,
   mainMenuCommands,
   normalizeSoccerEvent,
+  normalizeSoccerMatchDetails,
   normalizeSoccerStandings,
   openJoinRequestChatPicker,
   registerMainMenuCommands,

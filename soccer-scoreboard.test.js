@@ -2,13 +2,17 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   app,
+  fetchSoccerMatchDetails,
   fetchSoccerScoreboard,
   fetchSoccerStandings,
   getMatchMiniAppUrl,
   getMiniAppUrl,
   findNextScheduledSoccerMatch,
+  getSoccerMatchNotificationPhase,
+  isSubscribedToSoccerMatch,
   isValidScoreboardDate,
   normalizeSoccerEvent,
+  normalizeSoccerMatchDetails,
   normalizeSoccerStandings,
   soccerLeagues
 } = require('./bot');
@@ -30,8 +34,8 @@ test('normalizes ESPN soccer event data for the Mini App', () => {
         type: { state: 'in', shortDetail: '2nd Half' }
       },
       competitors: [
-        { homeAway: 'home', score: '2', team: { displayName: 'Home FC', logo: 'https://example.com/home.png' } },
-        { homeAway: 'away', score: '1', team: { displayName: 'Away FC', logo: 'https://example.com/away.png' } }
+        { homeAway: 'home', score: '2', team: { id: 'home-id', displayName: 'Home FC', logo: 'https://example.com/home.png' } },
+        { homeAway: 'away', score: '1', team: { id: 'away-id', displayName: 'Away FC', logo: 'https://example.com/away.png' } }
       ]
     }]
   }, { id: 'eng.1', name: 'Premier League' });
@@ -44,11 +48,151 @@ test('normalizes ESPN soccer event data for the Mini App', () => {
     state: 'in',
     status: '2nd Half',
     clock: '55:00',
-    home: { name: 'Home FC', logo: 'https://example.com/home.png', score: '2' },
-    away: { name: 'Away FC', logo: 'https://example.com/away.png', score: '1' },
+    home: { id: 'home-id', name: 'Home FC', logo: 'https://example.com/home.png', score: '2' },
+    away: { id: 'away-id', name: 'Away FC', logo: 'https://example.com/away.png', score: '1' },
     venue: ''
   });
   assert.equal(normalizeSoccerEvent({ competitions: [] }, { id: 'eng.1', name: 'Premier League' }), null);
+});
+
+test('normalizes match events, lineups, and team statistics from ESPN summary data', () => {
+  const details = normalizeSoccerMatchDetails({
+    plays: [{
+      clock: { displayValue: '23′' },
+      type: { text: 'Goal' },
+      text: 'Player A scores',
+      team: { id: 'home-id' },
+      participants: [{ athlete: { displayName: 'Player A' } }]
+    }],
+    rosters: [{
+      homeAway: 'home',
+      formation: '4-3-3',
+      team: { displayName: 'Home FC' },
+      roster: [{
+        starter: true,
+        formationPlace: '11',
+        jersey: '9',
+        position: { abbreviation: 'F' },
+        athlete: {
+          displayName: 'Player A',
+        }
+      }]
+    }],
+    boxscore: {
+      teams: [{
+        homeAway: 'home',
+        team: { displayName: 'Home FC' },
+        statistics: [
+          { name: 'possessionPct', label: 'Possession', displayValue: '58%' },
+          { name: 'totalGoals', label: 'Total Goals', displayValue: '15' }
+        ]
+      }]
+    }
+  });
+
+  assert.deepEqual(details, {
+    events: [{
+      clock: '23′',
+      type: 'Goal',
+      text: 'Player A scores',
+      teamId: 'home-id',
+      athletes: ['Player A']
+    }],
+    lineups: [{
+      homeAway: 'home',
+      teamName: 'Home FC',
+      formation: '4-3-3',
+      players: [{ name: 'Player A', position: 'F', jersey: '9', formationPlace: '11', starter: true }]
+    }],
+    statistics: [{
+      homeAway: 'home',
+      teamName: 'Home FC',
+      stats: [{ name: 'Possession', value: '58%' }]
+    }]
+  });
+});
+
+test('normalizes historic ESPN summaries with nested key events and lineup entries', () => {
+  const details = normalizeSoccerMatchDetails({
+    keyEvents: [
+      {
+        time: { displayValue: "18'" },
+        text: 'Home FC scores',
+        play: {
+          type: { text: 'Goal' },
+          text: 'Player A scores',
+          team: { id: 'home-id' }
+        }
+      },
+      {
+        time: { displayValue: "22'" },
+        text: 'The attack continues',
+        play: { type: { text: 'Commentary' }, text: 'The attack continues.' }
+      }
+    ],
+    rosters: [{
+      homeAway: 'home',
+      team: { displayName: 'Home FC' },
+      roster: [{
+        starter: true,
+        jersey: '1',
+        formationPlace: '1',
+        position: { displayName: 'Goalkeeper' },
+        athlete: { displayName: 'Keeper' }
+      }]
+    }],
+    boxscore: {
+      teams: [{
+        homeAway: 'home',
+        team: { displayName: 'Home FC' },
+        statistics: [{ name: 'possessionPct', label: 'Possession', displayValue: '56.5' }]
+      }]
+    }
+  });
+
+  assert.deepEqual(details.events, [{
+    clock: "18'",
+    type: 'Goal',
+    text: 'Player A scores',
+    teamId: 'home-id',
+    athletes: []
+  }]);
+  assert.deepEqual(details.lineups[0].players[0], {
+    name: 'Keeper',
+    position: 'Goalkeeper',
+    jersey: '1',
+    formationPlace: '1',
+    starter: true
+  });
+  assert.deepEqual(details.statistics[0].stats[0], { name: 'Possession', value: '56.5' });
+});
+
+test('fetches and caches match details from the selected ESPN competition', async () => {
+  const calls = [];
+  const fakeFetch = async (url) => {
+    calls.push(String(url));
+    return {
+      ok: true,
+      json: async () => ({
+        boxscore: {
+          teams: [{
+            homeAway: 'home',
+            team: { displayName: 'Home FC' },
+            statistics: [{ name: 'possessionPct', label: 'Possession', displayValue: '55%' }]
+          }]
+        }
+      })
+    };
+  };
+  const [first, second] = await Promise.all([
+    fetchSoccerMatchDetails('eng.1', 'details-test-1', fakeFetch),
+    fetchSoccerMatchDetails('eng.1', 'details-test-1', fakeFetch)
+  ]);
+
+  assert.deepEqual(first, second);
+  assert.equal(first.statistics[0].stats[0].value, '55%');
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /\/eng\.1\/summary\?event=details-test-1/);
 });
 
 test('includes only the six requested competitions', () => {
@@ -203,6 +347,7 @@ test('serves the embedded Mini App and its scoreboard API', async (t) => {
   const html = await page.text();
   assert.match(html, /class="brand-logo"/);
   assert.match(html, /alt="Futbolimiz UZ logotipi"/);
+  assert.match(html, /id="notification-hint"/);
   assert.match(html, /rel="icon" type="image\/png" href="\/mini-app\/logo\.png"/);
 
   const logo = await fetch(`${baseUrl}/mini-app/logo.png`);
@@ -213,6 +358,16 @@ test('serves the embedded Mini App and its scoreboard API', async (t) => {
   assert.equal(invalidDate.status, 400);
   const invalidLeague = await fetch(`${baseUrl}/api/mini-app/standings?league=uzb.1`);
   assert.equal(invalidLeague.status, 400);
+  const invalidDetailsLeague = await fetch(`${baseUrl}/api/mini-app/match-details?league=uzb.1&event=123`);
+  assert.equal(invalidDetailsLeague.status, 400);
+  const invalidDetailsEvent = await fetch(`${baseUrl}/api/mini-app/match-details?league=eng.1&event=not%20valid`);
+  assert.equal(invalidDetailsEvent.status, 400);
+  const unauthenticatedPreferences = await fetch(`${baseUrl}/api/mini-app/notification-preferences`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'get' })
+  });
+  assert.equal(unauthenticatedPreferences.status, 401);
 });
 
 test('uses the configured public origin with the embedded app path', () => {
@@ -222,11 +377,13 @@ test('uses the configured public origin with the embedded app path', () => {
 test('creates a Mini App link targeting the requested match and Tashkent date', () => {
   const url = new URL(getMatchMiniAppUrl({
     id: 'match-123',
+    leagueId: 'eng.1',
     startTime: '2026-10-15T19:30:00Z'
   }));
 
   assert.equal(url.pathname, '/mini-app/');
   assert.equal(url.searchParams.get('match'), 'match-123');
+  assert.equal(url.searchParams.get('league'), 'eng.1');
   assert.equal(url.searchParams.get('date'), '2026-10-16');
 });
 
@@ -250,4 +407,45 @@ test('selects the nearest upcoming scheduled match for a private notification te
     upcoming
   ], now), upcoming);
   assert.equal(findNextScheduledSoccerMatch([], now), null);
+});
+
+test('sends match notifications only to users following either club or the match', () => {
+  const event = {
+    id: 'match-123',
+    home: { id: 'home-id' },
+    away: { id: 'away-id' }
+  };
+
+  assert.equal(isSubscribedToSoccerMatch({
+    favoriteSoccerTeamIds: ['home-id'],
+    favoriteSoccerMatchIds: []
+  }, event), true);
+  assert.equal(isSubscribedToSoccerMatch({
+    favoriteSoccerTeamIds: [],
+    favoriteSoccerMatchIds: ['match-123']
+  }, event), true);
+  assert.equal(isSubscribedToSoccerMatch({
+    favoriteSoccerTeamIds: [],
+    favoriteSoccerMatchIds: []
+  }, event), false);
+});
+
+test('detects kick-off, score changes, and final results without duplicate notifications', () => {
+  const pre = { state: 'pre', homeScore: '0', awayScore: '0' };
+  const live = { state: 'in', home: { score: '0' }, away: { score: '0' } };
+  const previousLive = { state: 'in', homeScore: '0', awayScore: '0' };
+
+  assert.equal(getSoccerMatchNotificationPhase(pre, live), 'start');
+  assert.equal(getSoccerMatchNotificationPhase(previousLive, live), null);
+  assert.equal(getSoccerMatchNotificationPhase(
+    previousLive,
+    { ...live, home: { score: '1' } }
+  ), 'score:1:0');
+  assert.equal(getSoccerMatchNotificationPhase(
+    previousLive,
+    { state: 'post', home: { score: '1' }, away: { score: '0' } }
+  ), 'final');
+  assert.equal(getSoccerMatchNotificationPhase(null, {
+    state: 'post', home: { score: '1' }, away: { score: '0' }
+  }), null);
 });

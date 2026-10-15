@@ -21,6 +21,7 @@
       </button>
     </header>
 
+    <div id="dashboard-view">
     <section class="live-banner" aria-label="Jonli o'yinlar">
       <span class="live-dot"></span>
       <span>Jonli hisoblar</span>
@@ -31,6 +32,7 @@
       <button class="view-tab active" data-view="matches" type="button" aria-pressed="true">O‘yinlar</button>
       <button class="view-tab" data-view="standings" type="button" aria-pressed="false">Turnir jadvali</button>
     </section>
+    <div class="notification-hint" id="notification-hint" role="status" aria-live="polite"></div>
 
     <section class="controls" aria-label="O'yinlarni saralash">
       <div class="match-controls" id="match-controls">
@@ -79,6 +81,16 @@
       <span>Ma'lumotlar ESPN'dan</span>
       <span id="updated-at"></span>
     </footer>
+    </div>
+
+    <section class="match-detail" id="match-detail" aria-live="polite" hidden>
+      <div class="detail-topline">
+        <button class="detail-back-button" id="detail-back-button" type="button" aria-label="O‘yinlarga qaytish">‹</button>
+        <span class="detail-live-badge" id="detail-live-badge"></span>
+        <button class="detail-close-button" id="detail-close-button" type="button" aria-label="O‘yinni yopish">×</button>
+      </div>
+      <div id="match-detail-content"></div>
+    </section>
   </main>
 </body>
 </html>
