@@ -356,6 +356,23 @@ test('serves the embedded Mini App and its scoreboard API', async (t) => {
   assert.equal(logo.status, 200);
   assert.match(logo.headers.get('content-type'), /image\/png/);
 
+  const iconNames = [
+    'bandage', 'ball-football', 'bell', 'calendar-days', 'check', 'chevron-down',
+    'chevron-left', 'chevron-right', 'circle-dot', 'circle-x', 'flag', 'goal',
+    'moon', 'monitor', 'pause', 'pin', 'play', 'refresh-cw', 'repeat-2',
+    'shield-check', 'square', 'sun', 'timer', 'trophy', 'tv', 'user-round', 'x'
+  ];
+  const icons = await Promise.all(iconNames.map((name) => fetch(`${baseUrl}/mini-app/icons/${name}.svg`)));
+  for (const icon of icons) {
+    assert.equal(icon.status, 200);
+    assert.match(icon.headers.get('content-type'), /image\/svg\+xml/);
+    assert.match(await icon.text(), /<svg\b/);
+  }
+
+  const styles = await fetch(`${baseUrl}/mini-app/styles.css`);
+  assert.equal(styles.status, 200);
+  assert.match(await styles.text(), /mask-image:\s*var\(--svg-icon\)/);
+
   const invalidDate = await fetch(`${baseUrl}/api/mini-app/scoreboard?date=20260230`);
   assert.equal(invalidDate.status, 400);
   const invalidLeague = await fetch(`${baseUrl}/api/mini-app/standings?league=uzb.1`);

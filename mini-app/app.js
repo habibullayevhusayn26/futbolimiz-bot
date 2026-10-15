@@ -86,21 +86,12 @@
 
   function updateProfileThemeButton() {
     const themes = {
-      auto: {
-        label: 'Avto',
-        icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>'
-      },
-      light: {
-        label: 'Kunduzgi',
-        icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>'
-      },
-      dark: {
-        label: 'Tungi',
-        icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 14.2A8.5 8.5 0 0 1 9.8 3.2 8.7 8.7 0 1 0 20.8 14.2Z"/></svg>'
-      }
+      auto: { label: 'Avto', icon: 'monitor' },
+      light: { label: 'Kunduzgi', icon: 'sun' },
+      dark: { label: 'Tungi', icon: 'moon' }
     };
     const theme = themes[themePreference];
-    profileThemeButton.innerHTML = theme.icon;
+    profileThemeButton.innerHTML = iconMarkup(theme.icon);
     profileThemeButton.setAttribute('aria-label', `Mavzu: ${theme.label}. Keyingisiga o‘zgartirish`);
     profileThemeButton.title = `Mavzu: ${theme.label}`;
   }
@@ -152,6 +143,19 @@
     statusMessage.className = `status-message${kind ? ` ${kind}` : ''}`;
   }
 
+  function setImageIconFallback(image, iconName, className) {
+    image.addEventListener('error', () => {
+      const placeholder = document.createElement('span');
+      placeholder.className = className;
+      placeholder.innerHTML = iconMarkup(iconName);
+      image.replaceWith(placeholder);
+    }, { once: true });
+  }
+
+  function iconMarkup(name, className = '') {
+    return `<span class="svg-icon${className ? ` ${className}` : ''}" style="--svg-icon: url('/mini-app/icons/${name}.svg')" aria-hidden="true"></span>`;
+  }
+
   function showLoading() {
     list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
   }
@@ -162,9 +166,10 @@
       return;
     }
     const count = favoriteTeamIds.size + favoriteMatchIds.size;
-    notificationHint.textContent = count
-      ? `🔔 ${count} ta tanlov uchun o‘yin boshlanishi, gollar va yakuniy natija bildirishnomalari yoqilgan.`
-      : '🔔 Faqat tanlaganlaringiz haqida xabar olasiz. Klub yoki o‘yin yonidagi qo‘ng‘iroqni bosib obuna bo‘ling.';
+    const message = count
+      ? `${count} ta tanlov uchun o‘yin boshlanishi, gollar va yakuniy natija bildirishnomalari yoqilgan.`
+      : 'Faqat tanlaganlaringiz haqida xabar olasiz. Klub yoki o‘yin yonidagi qo‘ng‘iroqni bosib obuna bo‘ling.';
+    notificationHint.innerHTML = `${iconMarkup('bell', 'hint-icon')}<span>${message}</span>`;
   }
 
   async function loadNotificationPreferences() {
@@ -205,7 +210,7 @@
     button.setAttribute('aria-label', `${enabled ? 'Bildirishnomani o‘chirish' : 'Bildirishnomani yoqish'}: ${label}`);
     button.setAttribute('aria-pressed', String(enabled));
     button.title = enabled ? 'Bildirishnoma yoqilgan' : 'Bildirishnoma yoqish';
-    button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>';
+    button.innerHTML = iconMarkup('bell');
     button.addEventListener('click', () => toggleNotificationPreference(button, kind, id, label, eventDetails));
     return button;
   }
@@ -323,7 +328,7 @@
       option.setAttribute('role', 'option');
       option.setAttribute('aria-selected', String(league.id === selectedLeague));
       option.tabIndex = -1;
-      option.innerHTML = `<span class="league-option-mark" aria-hidden="true">${league.id === selectedLeague ? '✓' : ''}</span><span>${escapeHtml(league.name)}</span>`;
+      option.innerHTML = `<span class="league-option-mark">${league.id === selectedLeague ? iconMarkup('check') : ''}</span><span>${escapeHtml(league.name)}</span>`;
       option.addEventListener('click', () => selectLeague(league));
       return option;
     }));
@@ -380,7 +385,7 @@
     list.classList.add('standings-list');
     const tables = payload.tables || [];
     if (!tables.length) {
-      list.innerHTML = '<div class="empty-state"><div class="empty-icon">🏆</div><div class="empty-title">Turnir jadvali topilmadi</div><div>Bu mavsum uchun jadval ma’lumoti hozircha mavjud emas.</div></div>';
+      list.innerHTML = `<div class="empty-state"><div class="empty-icon">${iconMarkup('trophy')}</div><div class="empty-title">Turnir jadvali topilmadi</div><div>Bu mavsum uchun jadval ma’lumoti hozircha mavjud emas.</div></div>`;
       return;
     }
 
@@ -474,9 +479,11 @@
     const wrapper = document.createElement('div');
     wrapper.className = `team${away ? ' away' : ''}`;
     const logo = team.logo
-      ? `<img class="team-logo" src="${escapeAttribute(team.logo)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'team-placeholder',textContent:'⚽'}))">`
-      : '<span class="team-placeholder">⚽</span>';
+      ? `<img class="team-logo" src="${escapeAttribute(team.logo)}" alt="" loading="lazy">`
+      : `<span class="team-placeholder">${iconMarkup('ball-football')}</span>`;
     wrapper.innerHTML = `${logo}<span class="team-name">${escapeHtml(team.name)}</span>`;
+    const logoImage = wrapper.querySelector('.team-logo');
+    if (logoImage) setImageIconFallback(logoImage, 'ball-football', 'team-placeholder');
     const bell = notificationButton('team', team.id, team.name);
     if (bell) wrapper.append(bell);
     return wrapper;
@@ -556,7 +563,7 @@
     if (!filteredEvents.length) {
       const message = document.createElement('div');
       message.className = 'empty-state';
-      message.innerHTML = `<div class="empty-icon">${selectedFilter === 'in' ? '🔴' : '⚽'}</div>
+      message.innerHTML = `<div class="empty-icon">${iconMarkup(selectedFilter === 'in' ? 'circle-dot' : 'ball-football')}</div>
         <div class="empty-title">${selectedFilter === 'in' ? 'Hozircha jonli o‘yin yo‘q' : 'O‘yinlar topilmadi'}</div>
         <div>Tanlangan sana yoki musobaqada ko‘rsatiladigan o‘yin mavjud emas.</div>`;
       list.append(message);
@@ -606,7 +613,7 @@
   function renderMatchDetail(event, details) {
     const teamLogo = (team) => team.logo
       ? `<img src="${escapeAttribute(team.logo)}" alt="" onerror="this.remove()">`
-      : '<span class="detail-team-placeholder">⚽</span>';
+      : `<span class="detail-team-placeholder">${iconMarkup('ball-football')}</span>`;
     const score = event.state === 'pre' ? 'VS' : `${escapeHtml(event.home.score)} : ${escapeHtml(event.away.score)}`;
     const stats = details.statistics || [];
     const possession = stats.map((team) => ({
@@ -642,7 +649,7 @@
         <button type="button" class="detail-tab${activeDetailTab === 'lineups' ? ' active' : ''}" role="tab" aria-selected="${activeDetailTab === 'lineups'}" data-detail-tab="lineups">Tarkiblar</button>
         <button type="button" class="detail-tab${activeDetailTab === 'events' ? ' active' : ''}" role="tab" aria-selected="${activeDetailTab === 'events'}" data-detail-tab="events">Hodisalar</button>
         <button type="button" class="detail-tab${activeDetailTab === 'statistics' ? ' active' : ''}" role="tab" aria-selected="${activeDetailTab === 'statistics'}" data-detail-tab="statistics">Statistika</button>
-        <button type="button" class="detail-tab${activeDetailTab === 'goals' ? ' active' : ''}" role="tab" aria-selected="${activeDetailTab === 'goals'}" data-detail-tab="goals">⚽ Gollar</button>
+        <button type="button" class="detail-tab${activeDetailTab === 'goals' ? ' active' : ''}" role="tab" aria-selected="${activeDetailTab === 'goals'}" data-detail-tab="goals">${iconMarkup('ball-football')} Gollar</button>
       </nav>
       <section class="detail-panel${activeDetailTab === 'lineups' ? ' active' : ''}" role="tabpanel" data-detail-panel="lineups" ${activeDetailTab !== 'lineups' ? 'hidden' : ''}>
         ${renderLineups(details.lineups || [], event)}
@@ -679,12 +686,12 @@
       const description = `<strong>${escapeHtml(athletes || presentation.label)}</strong>${athletes ? `<span>${escapeHtml(presentation.label)}</span>` : ''}`;
       if (!side) {
         return `<li class="timeline-event neutral" title="${escapeAttribute(presentation.label)}">
-          <div class="event-neutral">${clock}<span class="timeline-icon" aria-hidden="true">${presentation.icon}</span>${description}</div>
+          <div class="event-neutral">${clock}${iconMarkup(presentation.icon, `timeline-icon event-icon-${presentation.kind}`)}${description}</div>
         </li>`;
       }
       return `<li class="timeline-event ${side}" title="${escapeAttribute(presentation.label)}">
         <div class="event-detail">${description}</div>
-        <div class="event-marker">${clock}<span class="timeline-icon" aria-hidden="true">${presentation.icon}</span></div>
+        <div class="event-marker">${clock}${iconMarkup(presentation.icon, `timeline-icon event-icon-${presentation.kind}`)}</div>
         <span class="event-spacer" aria-hidden="true"></span>
       </li>`;
     }).join('')}</ol>`;
@@ -703,25 +710,25 @@
 
   function matchEventPresentation(item) {
     const text = `${item.type || ''} ${item.text || ''}`.toLowerCase();
-    if (/own goal|o\.g\./i.test(text)) return { kind: 'goal', icon: '⚽', label: 'Avtogol' };
-    if (/red card|second yellow|sent off|sending off/i.test(text)) return { kind: 'red-card', icon: '🟥', label: 'Qizil kartochka' };
-    if (/yellow card/i.test(text)) return { kind: 'yellow-card', icon: '🟨', label: 'Sariq kartochka' };
-    if (/substitution|substitut|player on|player off/i.test(text)) return { kind: 'substitution', icon: '🔄', label: 'Almashtirish' };
-    if (/penalty.*(miss|save)|missed penalty/i.test(text)) return { kind: 'missed-penalty', icon: '❌', label: 'Penalti kiritilmadi' };
-    if (/penalty/i.test(text) && /goal|scored|score/i.test(text)) return { kind: 'goal', icon: '⚽', label: 'Penaltidan gol' };
-    if (/goal/i.test(text)) return { kind: 'goal', icon: '⚽', label: 'Gol' };
-    if (/\bvar\b|video assistant|video review/i.test(text)) return { kind: 'var', icon: '📺', label: 'VAR tekshiruvi' };
-    if (/kick.?off|first half begins/i.test(text)) return { kind: 'kickoff', icon: '▶️', label: 'O‘yin boshlandi' };
-    if (/start.*(?:2nd|second).*half|second half begins/i.test(text)) return { kind: 'second-half', icon: '▶️', label: 'Ikkinchi bo‘lim boshlandi' };
-    if (/match ends|end regular time|full.?time|second half ends/i.test(text)) return { kind: 'full-time', icon: '🏁', label: 'O‘yin yakunlandi' };
-    if (/half.?time|halftime|half ends/i.test(text)) return { kind: 'half-time', icon: '⏸️', label: 'Tanaffus' };
-    if (/extra time/i.test(text)) return { kind: 'extra-time', icon: '⏱️', label: 'Qo‘shimcha vaqt' };
-    if (/offside/i.test(text)) return { kind: 'offside', icon: '🚩', label: 'O‘yindan tashqari holat' };
-    if (/corner/i.test(text)) return { kind: 'corner', icon: '🚩', label: 'Burchak zarbasi' };
-    if (/save|saved/i.test(text)) return { kind: 'save', icon: '🧤', label: 'Darvozabon seyv qildi' };
-    if (/injur|medical|treatment/i.test(text)) return { kind: 'injury', icon: '🩹', label: 'Jarohat' };
-    if (/penalty/i.test(text)) return { kind: 'penalty', icon: '⚽', label: 'Penalti' };
-    return { kind: 'event', icon: '📌', label: 'Uchrashuv hodisasi' };
+    if (/own goal|o\.g\./i.test(text)) return { kind: 'goal', icon: 'ball-football', label: 'Avtogol' };
+    if (/red card|second yellow|sent off|sending off/i.test(text)) return { kind: 'red-card', icon: 'square', label: 'Qizil kartochka' };
+    if (/yellow card/i.test(text)) return { kind: 'yellow-card', icon: 'square', label: 'Sariq kartochka' };
+    if (/substitution|substitut|player on|player off/i.test(text)) return { kind: 'substitution', icon: 'repeat-2', label: 'Almashtirish' };
+    if (/penalty.*(miss|save)|missed penalty/i.test(text)) return { kind: 'missed-penalty', icon: 'circle-x', label: 'Penalti kiritilmadi' };
+    if (/penalty/i.test(text) && /goal|scored|score/i.test(text)) return { kind: 'goal', icon: 'ball-football', label: 'Penaltidan gol' };
+    if (/goal/i.test(text)) return { kind: 'goal', icon: 'ball-football', label: 'Gol' };
+    if (/\bvar\b|video assistant|video review/i.test(text)) return { kind: 'var', icon: 'tv', label: 'VAR tekshiruvi' };
+    if (/kick.?off|first half begins/i.test(text)) return { kind: 'kickoff', icon: 'play', label: 'O‘yin boshlandi' };
+    if (/start.*(?:2nd|second).*half|second half begins/i.test(text)) return { kind: 'second-half', icon: 'play', label: 'Ikkinchi bo‘lim boshlandi' };
+    if (/match ends|end regular time|full.?time|second half ends/i.test(text)) return { kind: 'full-time', icon: 'flag', label: 'O‘yin yakunlandi' };
+    if (/half.?time|halftime|half ends/i.test(text)) return { kind: 'half-time', icon: 'pause', label: 'Tanaffus' };
+    if (/extra time/i.test(text)) return { kind: 'extra-time', icon: 'timer', label: 'Qo‘shimcha vaqt' };
+    if (/offside/i.test(text)) return { kind: 'offside', icon: 'flag', label: 'O‘yindan tashqari holat' };
+    if (/corner/i.test(text)) return { kind: 'corner', icon: 'flag', label: 'Burchak zarbasi' };
+    if (/save|saved/i.test(text)) return { kind: 'save', icon: 'shield-check', label: 'Darvozabon seyv qildi' };
+    if (/injur|medical|treatment/i.test(text)) return { kind: 'injury', icon: 'bandage', label: 'Jarohat' };
+    if (/penalty/i.test(text)) return { kind: 'penalty', icon: 'ball-football', label: 'Penalti' };
+    return { kind: 'event', icon: 'pin', label: 'Uchrashuv hodisasi' };
   }
 
   function formatPossession(value) {
@@ -898,28 +905,49 @@
     return [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || 'Telegram foydalanuvchisi';
   }
 
-  function profileThemeIndex(user) {
+  function profileIdentityHash(user) {
     const identity = String(user.id || user.username || profileDisplayName(user));
-    const hash = Array.from(identity).reduce(
+    return Array.from(identity).reduce(
       (value, character) => (value * 31 + character.codePointAt(0)) >>> 0,
       7
     );
-    return hash % 8;
+  }
+
+  function profileThemeIndex(user) {
+    return profileIdentityHash(user) % 8;
+  }
+
+  function profilePattern(user) {
+    const patternIndex = profileIdentityHash(user) % 20;
+    const ornaments = Array.from({ length: 9 }, (_, index) => {
+      const x = 12 + ((patternIndex * 47 + index * 83 + index * index * 11) % 296);
+      const y = 8 + ((patternIndex * 29 + index * 37 + index * index * 13) % 132);
+      const size = 0.55 + ((patternIndex * 7 + index * 3) % 5) * 0.08;
+      const rotation = (patternIndex * 23 + index * 41) % 360;
+      const opacity = 0.14 + ((patternIndex + index) % 4) * 0.025;
+      return `<g transform="translate(${x} ${y}) rotate(${rotation}) scale(${size})" opacity="${opacity}"><path d="M12 20C11 14 6 10 2 9c1 6 5 10 10 11Zm0-2c1-7 5-11 10-13-1 7-5 12-10 13Zm0 1c-1-7-1-12 1-17 4 6 4 11-1 17Zm-1 0h2v4h-2z"/></g>`;
+    }).join('');
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 150" fill="#fff">${ornaments}</svg>`;
+    return {
+      index: patternIndex,
+      image: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
+    };
   }
 
   function renderProfile() {
     const user = telegram?.initDataUnsafe?.user;
     if (!user || !telegram?.initData) {
-      profileContent.innerHTML = '<div class="profile-empty"><span class="profile-empty-icon">👤</span><strong>Profil ma’lumotlari mavjud emas</strong><span>Shaxsiy profil va bildirishnoma tanlovlarini ko‘rish uchun Mini App’ni Telegram ichidan oching.</span></div>';
+      profileContent.innerHTML = `<div class="profile-empty"><span class="profile-empty-icon">${iconMarkup('user-round')}</span><strong>Profil ma’lumotlari mavjud emas</strong><span>Shaxsiy profil va bildirishnoma tanlovlarini ko‘rish uchun Mini App’ni Telegram ichidan oching.</span></div>`;
       return;
     }
 
     const fullName = profileDisplayName(user);
     const themeIndex = profileThemeIndex(user);
+    const pattern = profilePattern(user);
     const initials = fullName.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toLocaleUpperCase();
     const avatar = user.photo_url
       ? `<img src="${escapeAttribute(user.photo_url)}" alt="" onerror="this.remove()">`
-      : `<span>${escapeHtml(initials || '👤')}</span>`;
+      : `<span>${escapeHtml(initials || '')}</span>`;
     const teams = [...favoriteTeamIds].map((id) => {
       const details = knownTeamDetails.get(String(id)) || {};
       return {
@@ -943,7 +971,7 @@
     });
     profileContent.innerHTML = `
       <section class="profile-card">
-        <div class="profile-banner" data-profile-theme="${themeIndex}">
+        <div class="profile-banner" data-profile-theme="${themeIndex}" data-profile-pattern="${pattern.index}" style="--profile-pattern: ${pattern.image}">
           <div class="profile-identity">
             <div class="profile-avatar">${avatar}</div>
             <div class="profile-name">${escapeHtml(fullName)}</div>
@@ -956,7 +984,7 @@
       <section class="profile-section">
         <div class="profile-section-heading"><h2>Sevimli klublar</h2><span>${teams.length}</span></div>
         ${teams.length ? `<ul class="profile-list">${teams.map((team) => `<li class="profile-team-item" data-profile-team-id="${escapeAttribute(team.id)}">
-          <img class="profile-team-logo" src="${escapeAttribute(team.logo)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'profile-team-placeholder',textContent:'⚽'}))">
+          <img class="profile-team-logo" src="${escapeAttribute(team.logo)}" alt="" data-fallback-icon="ball-football">
           <span class="profile-team-name">${escapeHtml(team.name)}</span>
           <span class="profile-team-action" data-id="${escapeAttribute(team.id)}"></span>
         </li>`).join('')}</ul>`
@@ -966,7 +994,7 @@
       </section>
       <section class="profile-section">
         <div class="profile-section-heading"><h2>Obuna bo‘lgan o‘yinlar</h2><span>${matches.length}</span></div>
-        ${matches.length ? `<ul class="profile-list">${matches.map((match) => `<li><span class="profile-list-icon">⚽</span><span>${escapeHtml(match.name)}</span></li>`).join('')}</ul>`
+        ${matches.length ? `<ul class="profile-list">${matches.map((match) => `<li><span class="profile-list-icon">${iconMarkup('ball-football')}</span><span>${escapeHtml(match.name)}</span></li>`).join('')}</ul>`
           : '<p class="profile-empty-list">Hozircha o‘yinga obuna bo‘linmagan.</p>'}
       </section>
       <p class="profile-note">Klub yoki o‘yin bildirishnomalarini istalgan vaqtda qo‘ng‘iroqcha tugmasi orqali yoqib-o‘chirishingiz mumkin.</p>
@@ -981,6 +1009,9 @@
         placeholder.remove();
       }
     });
+    profileContent.querySelectorAll('img[data-fallback-icon="ball-football"]').forEach((image) =>
+      setImageIconFallback(image, 'ball-football', 'profile-team-placeholder')
+    );
     updateProfileThemeButton();
   }
 

@@ -17,10 +17,10 @@
         <img class="brand-logo" src="/mini-app/logo.png" alt="Futbolimiz UZ logotipi">
       </div>
       <button class="refresh-button" id="refresh-button" type="button" aria-label="Yangilash">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3L3 11m0 0V5m0 6h6m-5 2a8 8 0 0 0 14.9 3L21 13m0 0v6m0-6h-6"/></svg>
+        <span class="svg-icon" style="--svg-icon:url('/mini-app/icons/refresh-cw.svg')" aria-hidden="true"></span>
       </button>
       <button class="profile-button" id="profile-button" type="button" aria-label="Profilni ochish" title="Profil">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+        <span class="svg-icon" style="--svg-icon:url('/mini-app/icons/user-round.svg')" aria-hidden="true"></span>
       </button>
     </header>
 
@@ -46,15 +46,15 @@
           <button class="filter-tab" data-filter="post" type="button">Natijalar</button>
         </div>
         <div class="selection-row">
-          <button class="date-step" id="previous-day" type="button" aria-label="Oldingi kun">‹</button>
+          <button class="date-step" id="previous-day" type="button" aria-label="Oldingi kun"><span class="svg-icon" style="--svg-icon:url('/mini-app/icons/chevron-left.svg')" aria-hidden="true"></span></button>
           <input id="match-date" type="date" aria-label="O'yin sanasi">
-          <button class="date-step" id="next-day" type="button" aria-label="Keyingi kun">›</button>
+          <button class="date-step" id="next-day" type="button" aria-label="Keyingi kun"><span class="svg-icon" style="--svg-icon:url('/mini-app/icons/chevron-right.svg')" aria-hidden="true"></span></button>
           <button class="today-button" id="today-button" type="button">Bugun</button>
         </div>
       </div>
       <div class="league-select-wrap">
         <span class="league-filter-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 4.8 2 3.1-2 2.2.9 3.3-2.5 1.1M16.8 6l-2.7 1.2.5 2.6 3.4 1.5 2.4-1.3M9.4 20.5l.7-3.2 3-1.7 2.8 1.1.8 3.4"/></svg>
+          <span class="svg-icon" style="--svg-icon:url('/mini-app/icons/ball-football.svg')"></span>
         </span>
         <span class="league-filter-copy">
           <span class="league-filter-caption">MUSOBAQA FILTRI</span>
@@ -68,7 +68,7 @@
             aria-controls="league-options"
           >
             <span id="league-select-label">Barcha musobaqalar</span>
-            <svg class="league-filter-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+            <span class="svg-icon league-filter-chevron" style="--svg-icon:url('/mini-app/icons/chevron-down.svg')" aria-hidden="true"></span>
           </button>
         </span>
         <span class="league-filter-count" id="league-filter-count">6 LIGA</span>
@@ -88,16 +88,16 @@
 
     <section class="match-detail" id="match-detail" aria-live="polite" hidden>
       <div class="detail-topline">
-        <button class="detail-back-button" id="detail-back-button" type="button" aria-label="O‘yinlarga qaytish">‹</button>
+        <button class="detail-back-button" id="detail-back-button" type="button" aria-label="O‘yinlarga qaytish"><span class="svg-icon" style="--svg-icon:url('/mini-app/icons/chevron-left.svg')" aria-hidden="true"></span></button>
         <span class="detail-live-badge" id="detail-live-badge"></span>
-        <button class="detail-close-button" id="detail-close-button" type="button" aria-label="O‘yinni yopish">×</button>
+        <button class="detail-close-button" id="detail-close-button" type="button" aria-label="O‘yinni yopish"><span class="svg-icon" style="--svg-icon:url('/mini-app/icons/x.svg')" aria-hidden="true"></span></button>
       </div>
       <div id="match-detail-content"></div>
     </section>
 
     <section class="profile-view" id="profile-view" aria-live="polite" hidden>
       <div class="profile-topline">
-        <button class="detail-back-button" id="profile-back-button" type="button" aria-label="Asosiy sahifaga qaytish">‹</button>
+        <button class="detail-back-button" id="profile-back-button" type="button" aria-label="Asosiy sahifaga qaytish"><span class="svg-icon" style="--svg-icon:url('/mini-app/icons/chevron-left.svg')" aria-hidden="true"></span></button>
         <button class="profile-theme-button" id="profile-theme-button" type="button" aria-label="Mavzu: Avto" title="Mavzu: Avto"></button>
         <h1>Profil</h1>
       </div>
