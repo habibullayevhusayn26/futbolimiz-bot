@@ -224,7 +224,9 @@ function normalizeSavedSoccerLiveStreams(savedStreams, legacyStream) {
           leagueName: String(savedStream.match.leagueName || ''),
           startTime: String(savedStream.match.startTime || ''),
           homeName: String(savedStream.match.homeName || ''),
-          awayName: String(savedStream.match.awayName || '')
+          awayName: String(savedStream.match.awayName || ''),
+          homeLogo: String(savedStream.match.homeLogo || ''),
+          awayLogo: String(savedStream.match.awayLogo || '')
         }
         : null
     }];
@@ -717,8 +719,9 @@ function findSoccerMatchesStartingWithin(events, now = Date.now(), windowMs = 30
   return events
     .filter((event) => {
       const startTime = Date.parse(event.startTime || '');
-      return event.state === 'pre' && Number.isFinite(startTime) &&
-        startTime >= now && startTime <= now + windowMs;
+      if (!Number.isFinite(startTime)) return false;
+      return (event.state === 'pre' && startTime >= now && startTime <= now + windowMs) ||
+        (event.state === 'in' && startTime >= now - windowMs && startTime <= now);
     })
     .sort((left, right) => Date.parse(left.startTime) - Date.parse(right.startTime));
 }
@@ -3135,7 +3138,7 @@ bot.action('admin:stream_auto_match', async (ctx) => {
     const events = await findUpcomingStreamMatches();
     if (!events.length) {
       return ctx.reply(
-        'Keyingi 30 daqiqada boshlanadigan o‘yin topilmadi. O‘zingiz efir nomini kiritishingiz mumkin:',
+        'Oxirgi 30 daqiqada boshlangan yoki keyingi 30 daqiqada boshlanadigan o‘yin topilmadi. Efirga o‘zingiz nom berishingiz mumkin:',
         Markup.inlineKeyboard([
           [Markup.button.callback('✍️ Efirga nom berish', 'admin:stream_custom_title')],
           [Markup.button.callback('❌ Bekor qilish', 'admin:stream_cancel')]
@@ -3144,7 +3147,10 @@ bot.action('admin:stream_auto_match', async (ctx) => {
     }
     ctx.session.step = 'live_stream_match_selection';
     const rows = events.map((event) => {
-      const label = `${formattedMatchTime(event.startTime)} · ${event.home.name} — ${event.away.name}`;
+      const timing = event.state === 'in'
+        ? `🔴 ${event.clock || event.status || 'Jonli'}`
+        : `🕒 ${formattedMatchTime(event.startTime)}`;
+      const label = `${timing} · ${event.home.name} — ${event.away.name}`;
       return [Markup.button.callback(
         label.length > 64 ? `${label.slice(0, 61)}…` : label,
         `admin:stream_match:${event.leagueId}:${event.id}`
@@ -3152,7 +3158,7 @@ bot.action('admin:stream_auto_match', async (ctx) => {
     });
     rows.push([Markup.button.callback('✍️ O‘zim nom beraman', 'admin:stream_custom_title')]);
     rows.push([Markup.button.callback('❌ Bekor qilish', 'admin:stream_cancel')]);
-    return ctx.reply('30 daqiqa ichida boshlanadigan o‘yinni tanlang:', Markup.inlineKeyboard(rows));
+    return ctx.reply('Oxirgi 30 daqiqada boshlangan yoki keyingi 30 daqiqada boshlanadigan o‘yinni tanlang:', Markup.inlineKeyboard(rows));
   } catch (error) {
     console.error('Upcoming live stream matches could not be loaded:', error.message);
     return ctx.reply('Yaqin o‘yinlarni yuklab bo‘lmadi. Birozdan keyin qayta urinib ko‘ring yoki efirga o‘zingiz nom bering.', Markup.inlineKeyboard([
@@ -3174,7 +3180,7 @@ bot.action(/^admin:stream_match:([a-z0-9.]+):([A-Za-z0-9_-]{1,30})$/, async (ctx
     const event = events.find((item) => item.leagueId === ctx.match[1] && item.id === ctx.match[2]);
     if (!event) {
       ctx.session.step = 'live_stream_match_choice';
-      return ctx.reply('Bu o‘yin 30 daqiqa ichidagi ro‘yxatdan chiqdi. Efirga o‘zingiz nom bering yoki boshqa o‘yin tanlang.', Markup.inlineKeyboard([
+      return ctx.reply('Bu o‘yin so‘nggi yoki keyingi 30 daqiqa ro‘yxatidan chiqdi. Efirga o‘zingiz nom bering yoki boshqa o‘yin tanlang.', Markup.inlineKeyboard([
         [Markup.button.callback('🔄 O‘yinlarni qayta yuklash', 'admin:stream_auto_match')],
         [Markup.button.callback('✍️ Efirga nom berish', 'admin:stream_custom_title')],
         [Markup.button.callback('❌ Bekor qilish', 'admin:stream_cancel')]
@@ -3189,7 +3195,9 @@ bot.action(/^admin:stream_match:([a-z0-9.]+):([A-Za-z0-9_-]{1,30})$/, async (ctx
         leagueName: event.leagueName,
         startTime: event.startTime,
         homeName: event.home.name,
-        awayName: event.away.name
+        awayName: event.away.name,
+        homeLogo: event.home.logo,
+        awayLogo: event.away.logo
       }
     };
     await saveSoccerLiveStream(ctx, stream);

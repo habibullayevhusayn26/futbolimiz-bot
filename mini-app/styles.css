@@ -232,10 +232,28 @@ h1 {
 }
 
 .stream-heading {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
   overflow: hidden;
   font-size: 20px;
   line-height: 1.2;
+}
+
+.stream-team-logo {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
+.stream-title-text {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stream-viewer-count {
@@ -290,9 +308,16 @@ h1 {
 }
 
 .stream-choice-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.stream-choice-title .stream-team-logo {
+  width: 18px;
+  height: 18px;
 }
 
 .stream-choice-viewers {

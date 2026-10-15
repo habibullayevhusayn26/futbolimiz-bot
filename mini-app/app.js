@@ -535,6 +535,22 @@
       activeHlsPlayer = null;
     }
     liveStreamView.replaceChildren();
+    const appendStreamTitle = (container, title, match) => {
+      for (const logoUrl of [match?.homeLogo, match?.awayLogo]) {
+        if (!logoUrl) continue;
+        const logo = document.createElement('img');
+        logo.className = 'stream-team-logo';
+        logo.src = logoUrl;
+        logo.alt = '';
+        logo.setAttribute('aria-hidden', 'true');
+        logo.addEventListener('error', () => logo.remove(), { once: true });
+        container.append(logo);
+      }
+      const titleText = document.createElement('span');
+      titleText.className = 'stream-title-text';
+      titleText.textContent = title || 'Jonli efir';
+      container.append(titleText);
+    };
     if (currentLiveStreams.length > 1) {
       const streamChoices = document.createElement('div');
       streamChoices.className = 'stream-choices';
@@ -549,7 +565,7 @@
         choice.dataset.streamId = availableStream.id;
         const choiceTitle = document.createElement('span');
         choiceTitle.className = 'stream-choice-title';
-        choiceTitle.textContent = availableStream.title || 'Jonli efir';
+        appendStreamTitle(choiceTitle, availableStream.title, availableStream.match);
         const choiceViewers = document.createElement('span');
         choiceViewers.className = 'stream-choice-viewers';
         choiceViewers.dataset.streamViewers = availableStream.id;
@@ -568,7 +584,7 @@
     }
     const heading = document.createElement('h1');
     heading.className = 'stream-heading';
-    heading.textContent = stream?.title || 'Jonli efir';
+    appendStreamTitle(heading, stream?.title, stream?.match);
     const headingRow = document.createElement('div');
     headingRow.className = 'stream-heading-row';
     headingRow.append(heading);

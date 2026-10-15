@@ -91,7 +91,17 @@ test('loads legacy live stream settings and validates multiple saved streams', (
     title: 'Old stream'
   };
   const multiple = normalizeSavedSoccerLiveStreams([
-    { id: 'saved-stream-id-1234', url: 'https://media.example.com/live.m3u8', title: 'HLS stream' },
+    {
+      id: 'saved-stream-id-1234',
+      url: 'https://media.example.com/live.m3u8',
+      title: 'HLS stream',
+      match: {
+        homeName: 'Home FC',
+        awayName: 'Away FC',
+        homeLogo: 'https://example.com/home.png',
+        awayLogo: 'https://example.com/away.png'
+      }
+    },
     { id: 'invalid', url: 'http://invalid.example.com/live.m3u8', title: 'Bad stream' }
   ]);
 
@@ -99,19 +109,27 @@ test('loads legacy live stream settings and validates multiple saved streams', (
   assert.equal(multiple.length, 1);
   assert.equal(multiple[0].id, 'saved-stream-id-1234');
   assert.equal(multiple[0].type, 'hls');
+  assert.equal(multiple[0].match.homeLogo, 'https://example.com/home.png');
+  assert.equal(multiple[0].match.awayLogo, 'https://example.com/away.png');
   assert.equal(normalizeSoccerLiveStream('https://www.youtube.com/watch?v=short'), null);
   assert.equal(normalizeSoccerLiveStream('https://media.example.com/live.mp4'), null);
 });
 
-test('selects only scheduled matches within the next 30 minutes in kickoff order', () => {
+test('selects upcoming and recently started matches within 30 minutes in kickoff order', () => {
   const now = Date.parse('2026-10-15T12:00:00Z');
   const events = [
     { id: 'later', state: 'pre', startTime: '2026-10-15T12:25:00Z' },
-    { id: 'in-progress', state: 'in', startTime: '2026-10-15T12:05:00Z' },
+    { id: 'started-recently', state: 'in', startTime: '2026-10-15T11:45:00Z' },
+    { id: 'started-too-early', state: 'in', startTime: '2026-10-15T11:29:00Z' },
+    { id: 'finished', state: 'post', startTime: '2026-10-15T11:50:00Z' },
     { id: 'too-late', state: 'pre', startTime: '2026-10-15T12:31:00Z' },
     { id: 'first', state: 'pre', startTime: '2026-10-15T12:00:00Z' }
   ];
-  assert.deepEqual(findSoccerMatchesStartingWithin(events, now).map((event) => event.id), ['first', 'later']);
+  assert.deepEqual(findSoccerMatchesStartingWithin(events, now).map((event) => event.id), [
+    'started-recently',
+    'first',
+    'later'
+  ]);
 });
 
 test('counts live viewers once per identity and expires inactive viewers', () => {
