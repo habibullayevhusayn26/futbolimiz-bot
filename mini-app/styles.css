@@ -2052,7 +2052,7 @@ html[data-theme="dark"] .detail-close-button {
 }
 
 html[data-theme="dark"] .brand-logo {
-  filter: drop-shadow(0 0 1px #fff) drop-shadow(0 2px 5px rgba(0, 0, 0, .75));
+  filter: brightness(0) invert(1);
 }
 
 html[data-theme="dark"] .view-tabs,
