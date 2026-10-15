@@ -54,6 +54,7 @@
   let livePlayerControls = null;
   let screenWakeLock = null;
   let screenWakeLockRequest = null;
+  let liveScreenWakeLockEnabled = false;
   let screenWakeLockUnsupportedWarned = false;
   let fullscreenControlsTimer = null;
   let youtubePlayerState = -1;
@@ -372,6 +373,7 @@
     viewerHeartbeatTimer = null;
     window.clearTimeout(fullscreenControlsTimer);
     fullscreenControlsTimer = null;
+    liveScreenWakeLockEnabled = false;
     void releaseLiveScreenWakeLock();
     livePlayerControls = null;
     const telegramWebApp = window.Telegram?.WebApp;
@@ -472,29 +474,43 @@
   }
 
   async function requestLiveScreenWakeLock() {
-    if (document.visibilityState !== 'visible' || selectedView !== 'stream' ||
-        !livePlayerControls || screenWakeLock) return;
+    if (!liveScreenWakeLockEnabled || document.visibilityState !== 'visible' ||
+        selectedView !== 'stream' || screenWakeLock) return;
+    const setWakeLockMessage = (message) => {
+      const status = livePlayerControls?.status;
+      if (!status) return;
+      status.textContent = message;
+      status.dataset.wakeLockMessage = message ? 'true' : 'false';
+    };
     if (!('wakeLock' in navigator)) {
       if (!screenWakeLockUnsupportedWarned) {
         console.warn('This browser does not support keeping the screen awake during a live stream.');
         screenWakeLockUnsupportedWarned = true;
       }
+      setWakeLockMessage('Bu Telegram yoki brauzer ekran qulflanishini oldini olishni qo‘llab-quvvatlamaydi.');
       return;
     }
     if (screenWakeLockRequest) return screenWakeLockRequest;
     screenWakeLockRequest = navigator.wakeLock.request('screen')
       .then(async (wakeLock) => {
-        if (document.visibilityState !== 'visible' || selectedView !== 'stream' || !livePlayerControls) {
+        if (!liveScreenWakeLockEnabled || document.visibilityState !== 'visible' || selectedView !== 'stream') {
           await wakeLock.release();
           return;
         }
         screenWakeLock = wakeLock;
+        if (livePlayerControls?.status.dataset.wakeLockMessage === 'true') {
+          livePlayerControls.status.textContent = '';
+          livePlayerControls.status.dataset.wakeLockMessage = 'false';
+        }
         wakeLock.addEventListener('release', () => {
-          if (screenWakeLock === wakeLock) screenWakeLock = null;
+          if (screenWakeLock !== wakeLock) return;
+          screenWakeLock = null;
+          void requestLiveScreenWakeLock();
         }, { once: true });
       })
       .catch((error) => {
         console.warn('Live stream screen wake lock could not be acquired:', error);
+        setWakeLockMessage('Ekranni faol saqlab bo‘lmadi. Telegram sozlamalarida avtomatik qulflashni o‘chiring.');
       })
       .finally(() => {
         screenWakeLockRequest = null;
@@ -671,7 +687,7 @@
     if (stream.type === 'youtube') volume.hidden = true;
     controls.append(playButton, soundButton, volume, fullscreenButton);
     player.append(stage, controls, fullscreenTouchLayer);
-    livePlayerControls = { playButton, soundButton, volume, fullscreenButton, video, frame, player };
+    livePlayerControls = { playButton, soundButton, volume, fullscreenButton, video, frame, player, status };
 
     const updatePlayButton = (playing) => {
       playButton.innerHTML = iconMarkup(playing ? 'pause' : 'play');
@@ -679,6 +695,8 @@
     };
     updatePlayButton(false);
     playButton.addEventListener('click', () => {
+      liveScreenWakeLockEnabled = true;
+      void requestLiveScreenWakeLock();
       if (video) {
         if (video.paused) {
           video.play().catch((error) => {
@@ -754,6 +772,8 @@
     player.addEventListener('keydown', showFullscreenControls);
     fullscreenTouchLayer.addEventListener('pointerdown', showFullscreenControls);
     fullscreenButton.addEventListener('click', async () => {
+      liveScreenWakeLockEnabled = true;
+      void requestLiveScreenWakeLock();
       const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
       const telegramWebApp = window.Telegram?.WebApp;
       const isFullscreen = fullscreenElement === player || telegramWebApp?.isFullscreen || player.classList.contains('is-fullscreen');
@@ -883,11 +903,16 @@
       youtubePlayerState = Number(state);
       livePlayerControls.playButton.innerHTML = iconMarkup(youtubePlayerState === 1 ? 'pause' : 'play');
       livePlayerControls.playButton.setAttribute('aria-label', youtubePlayerState === 1 ? 'Efirni pauza qilish' : 'Efirni boshlash');
+      if (youtubePlayerState === 1) {
+        liveScreenWakeLockEnabled = true;
+        void requestLiveScreenWakeLock();
+      }
     }
   });
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && selectedView === 'stream' && currentLiveStream) {
+      liveScreenWakeLockEnabled = true;
       void requestLiveScreenWakeLock();
       void updateLiveViewerHeartbeat(currentLiveStream.id);
     }
@@ -1749,6 +1774,7 @@
     liveStreamView.hidden = !isStream;
     footer.hidden = isStream;
     if (isStandings) {
+      liveScreenWakeLockEnabled = false;
       stopLiveStream();
       loadStandings();
     } else if (isStream) {
