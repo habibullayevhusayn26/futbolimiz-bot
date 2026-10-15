@@ -956,17 +956,13 @@
     );
   }
 
-  function profileThemeIndex(user) {
-    return profileIdentityHash(user) % 8;
-  }
-
   function profilePattern(user) {
     const patternIndex = profileIdentityHash(user) % 20;
     const avatarOrnaments = Array.from({ length: 14 }, (_, index) => {
       const angle = (patternIndex * 13 + index * (360 / 14) + ((patternIndex + index * 3) % 5 - 2) * 2) * Math.PI / 180;
-      const radius = 53 + ((patternIndex * 7 + index * 3) % 5) * 1.5;
-      const x = 80 + Math.cos(angle) * radius;
-      const y = 80 + Math.sin(angle) * radius;
+      const radius = 39 + ((patternIndex * 7 + index * 3) % 5) * 1.5;
+      const x = 60 + Math.cos(angle) * radius;
+      const y = 60 + Math.sin(angle) * radius;
       const size = 0.62 + ((patternIndex * 7 + index * 3) % 5) * 0.07;
       const rotation = (patternIndex * 23 + index * 41) % 360;
       const opacity = 0.14 + ((patternIndex + index) % 4) * 0.025;
@@ -983,12 +979,15 @@
       const opacity = 0.08 + ((patternIndex + index) % 4) * 0.018;
       return `<g transform="translate(${x} ${y}) rotate(${rotation}) scale(${size})" opacity="${opacity}"><path d="M12 20C11 14 6 10 2 9c1 6 5 10 10 11Zm0-2c1-7 5-11 10-13-1 7-5 12-10 13Zm0 1c-1-7-1-12 1-17 4 6 4 11-1 17Zm-1 0h2v4h-2z"/></g>`;
     }).join('');
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" fill="#fff">${avatarOrnaments}</svg>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="#fff">${avatarOrnaments}</svg>`;
     const backgroundSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 160" fill="#fff">${backgroundOrnaments}</svg>`;
+    const hue = (118 + patternIndex * 47) % 360;
+    const background = `linear-gradient(125deg, hsl(${hue} 30% 36%), hsl(${hue} 34% 45%) 52%, hsl(${hue} 32% 33%))`;
     return {
       index: patternIndex,
       image: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`,
-      backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(backgroundSvg)}")`
+      backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(backgroundSvg)}")`,
+      background
     };
   }
 
@@ -1000,7 +999,6 @@
     }
 
     const fullName = profileDisplayName(user);
-    const themeIndex = profileThemeIndex(user);
     const pattern = profilePattern(user);
     const initials = fullName.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toLocaleUpperCase();
     const avatar = user.photo_url
@@ -1029,7 +1027,7 @@
     });
     profileContent.innerHTML = `
       <section class="profile-card">
-        <div class="profile-banner" data-profile-theme="${themeIndex}" style="--profile-background-pattern: ${escapeAttribute(pattern.backgroundImage)}">
+        <div class="profile-banner" style="--profile-background: ${pattern.background}; --profile-background-pattern: ${escapeAttribute(pattern.backgroundImage)}">
           <div class="profile-identity">
             <div class="profile-avatar-wrap" data-profile-pattern="${pattern.index}" style="--profile-pattern: ${escapeAttribute(pattern.image)}">
               <div class="profile-avatar">${avatar}</div>

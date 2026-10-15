@@ -899,35 +899,7 @@ h1 {
   isolation: isolate;
   margin: 0 -16px 8px;
   overflow: hidden;
-  background: linear-gradient(125deg, #087f8c, #08a6a6 52%, #086b83);
-}
-
-.profile-banner[data-profile-theme="1"] {
-  background: linear-gradient(125deg, #a32862, #df3f75 52%, #8b285e);
-}
-
-.profile-banner[data-profile-theme="2"] {
-  background: linear-gradient(125deg, #4b3eae, #7657dc 52%, #493894);
-}
-
-.profile-banner[data-profile-theme="3"] {
-  background: linear-gradient(125deg, #b34a13, #ed7a20 52%, #9d3516);
-}
-
-.profile-banner[data-profile-theme="4"] {
-  background: linear-gradient(125deg, #167347, #25a86d 52%, #11664f);
-}
-
-.profile-banner[data-profile-theme="5"] {
-  background: linear-gradient(125deg, #2454ae, #3885e8 52%, #244a9c);
-}
-
-.profile-banner[data-profile-theme="6"] {
-  background: linear-gradient(125deg, #a33327, #e45d47 52%, #982c40);
-}
-
-.profile-banner[data-profile-theme="7"] {
-  background: linear-gradient(125deg, #6f489e, #a45bd0 52%, #673b8e);
+  background: var(--profile-background);
 }
 
 .profile-banner::before {
@@ -957,17 +929,17 @@ h1 {
   z-index: 1;
   display: grid;
   justify-items: center;
-  gap: 5px;
-  padding: 16px 12px;
+  gap: 3px;
+  padding: 4px 12px;
 }
 
 .profile-avatar-wrap {
   position: relative;
   display: grid;
-  width: 148px;
-  height: 148px;
+  width: 104px;
+  height: 104px;
   place-items: center;
-  margin-bottom: 1px;
+  margin-bottom: 0;
 }
 
 .profile-avatar-wrap::before {
@@ -984,8 +956,8 @@ h1 {
   position: relative;
   z-index: 1;
   display: grid;
-  width: 72px;
-  height: 72px;
+  width: 68px;
+  height: 68px;
   overflow: hidden;
   place-items: center;
   margin: 0;
