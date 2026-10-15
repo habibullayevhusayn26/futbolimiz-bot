@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1220">
+  <title>Futbol jonli hisoblari</title>
+  <link rel="stylesheet" href="/mini-app/styles.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="/mini-app/app.js" defer></script>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">FUTBOLIMIZ UZ</p>
+        <h1>Futbol olami</h1>
+      </div>
+      <button class="refresh-button" id="refresh-button" type="button" aria-label="Yangilash">⟳</button>
+    </header>
+
+    <section class="live-banner" aria-label="Jonli o'yinlar">
+      <span class="live-dot"></span>
+      <span>Jonli hisoblar</span>
+      <span class="live-count" id="live-count">0</span>
+    </section>
+
+    <section class="controls" aria-label="O'yinlarni saralash">
+      <div class="filter-tabs" role="tablist" aria-label="O'yin holati">
+        <button class="filter-tab active" data-filter="all" type="button">Barchasi</button>
+        <button class="filter-tab" data-filter="in" type="button">Jonli</button>
+        <button class="filter-tab" data-filter="pre" type="button">Jadval</button>
+        <button class="filter-tab" data-filter="post" type="button">Natijalar</button>
+      </div>
+      <div class="selection-row">
+        <button class="date-step" id="previous-day" type="button" aria-label="Oldingi kun">‹</button>
+        <input id="match-date" type="date" aria-label="O'yin sanasi">
+        <button class="date-step" id="next-day" type="button" aria-label="Keyingi kun">›</button>
+        <button class="today-button" id="today-button" type="button">Bugun</button>
+      </div>
+      <label class="league-select-wrap">
+        <span>Musobaqa</span>
+        <select id="league-select" aria-label="Musobaqani tanlang">
+          <option value="all">Barcha musobaqalar</option>
+        </select>
+      </label>
+    </section>
+
+    <div class="status-message" id="status-message" role="status" aria-live="polite"></div>
+    <section class="match-list" id="match-list" aria-label="Futbol o'yinlari"></section>
+
+    <footer class="footer">
+      <span>Ma'lumotlar ESPN'dan</span>
+      <span id="updated-at"></span>
+    </footer>
+  </main>
+</body>
+</html>

@@ -5,6 +5,7 @@ process.env.TZ = config.timezone;
 const mongoose = require('mongoose');
 const express = require('express');
 const crypto = require('crypto');
+const path = require('path');
 const { Telegraf, Markup, session } = require('telegraf');
 
 const mongoConnection = mongoose.connection;
@@ -124,17 +125,167 @@ app.use('/api/mini-app', (req, res, next) => {
   if (origin) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
-    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.set('Access-Control-Allow-Headers', 'Content-Type');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   return next();
 });
+app.use('/mini-app', express.static(path.join(__dirname, 'mini-app')));
+app.get('/mini-app', (req, res) => res.sendFile(path.join(__dirname, 'mini-app', 'index.html')));
 app.get('/', (req, res) => res.send('Movie bot ishlamoqda...'));
 app.get('/health', (req, res) => res.status(200).json({
   ok: true,
   mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
 }));
+
+const soccerLeagues = [
+  { id: 'eng.1', name: 'Premier League' },
+  { id: 'esp.1', name: 'La Liga' },
+  { id: 'ger.1', name: 'Bundesliga' },
+  { id: 'ita.1', name: 'Serie A' },
+  { id: 'fra.1', name: 'Ligue 1' },
+  { id: 'ned.1', name: 'Eredivisie' },
+  { id: 'por.1', name: 'Primeira Liga' },
+  { id: 'tur.1', name: 'Süper Lig' },
+  { id: 'sco.1', name: 'Scottish Premiership' },
+  { id: 'bel.1', name: 'Belgian Pro League' },
+  { id: 'bra.1', name: 'Brasileirão' },
+  { id: 'arg.1', name: 'Liga Profesional Argentina' },
+  { id: 'mex.1', name: 'Liga MX' },
+  { id: 'usa.1', name: 'MLS' },
+  { id: 'uefa.champions', name: 'UEFA Champions League' },
+  { id: 'uefa.europa', name: 'UEFA Europa League' },
+  { id: 'uefa.europa.conf', name: 'UEFA Conference League' },
+  { id: 'uefa.nations', name: 'UEFA Nations League' },
+  { id: 'eng.fa', name: 'FA Cup' },
+  { id: 'eng.league_cup', name: 'EFL Cup' },
+  { id: 'esp.copa_del_rey', name: 'Copa del Rey' },
+  { id: 'ger.dfb_pokal', name: 'DFB-Pokal' },
+  { id: 'ita.coppa_italia', name: 'Coppa Italia' },
+  { id: 'fra.coupe_de_france', name: 'Coupe de France' },
+  { id: 'fifa.world', name: 'FIFA World Cup' },
+  { id: 'fifa.worldq.uefa', name: 'World Cup Qualifiers - UEFA' },
+  { id: 'fifa.worldq.conmebol', name: 'World Cup Qualifiers - CONMEBOL' },
+  { id: 'fifa.worldq.concacaf', name: 'World Cup Qualifiers - CONCACAF' },
+  { id: 'fifa.worldq.afc', name: 'World Cup Qualifiers - AFC' },
+  { id: 'fifa.worldq.caf', name: 'World Cup Qualifiers - CAF' }
+];
+const soccerScoreboardCache = new Map();
+const soccerScoreboardRequests = new Map();
+const scoreboardCacheTtlMs = 30_000;
+const scoreboardDatePattern = /^\d{8}$/;
+
+function isValidScoreboardDate(date) {
+  if (!scoreboardDatePattern.test(date)) return false;
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(4, 6));
+  const day = Number(date.slice(6, 8));
+  const parsedDate = new Date(Date.UTC(year, month - 1, day));
+  return parsedDate.getUTCFullYear() === year &&
+    parsedDate.getUTCMonth() === month - 1 &&
+    parsedDate.getUTCDate() === day;
+}
+
+function normalizeSoccerEvent(event, league) {
+  const competition = event.competitions?.[0];
+  const competitors = competition?.competitors || [];
+  const home = competitors.find((competitor) => competitor.homeAway === 'home');
+  const away = competitors.find((competitor) => competitor.homeAway === 'away');
+  if (!home?.team || !away?.team) return null;
+
+  const status = competition.status?.type || {};
+  const state = ['pre', 'in', 'post'].includes(status.state) ? status.state : 'pre';
+  return {
+    id: event.id,
+    leagueId: league.id,
+    leagueName: league.name,
+    startTime: competition.date || event.date,
+    state,
+    status: status.shortDetail || status.detail || status.description || '',
+    clock: competition.status?.displayClock || '',
+    home: {
+      name: home.team.displayName || home.team.name || '',
+      logo: home.team.logo || '',
+      score: home.score ?? ''
+    },
+    away: {
+      name: away.team.displayName || away.team.name || '',
+      logo: away.team.logo || '',
+      score: away.score ?? ''
+    },
+    venue: competition.venue?.fullName || ''
+  };
+}
+
+async function loadSoccerScoreboard(date, fetchImpl) {
+  const events = [];
+  let nextLeagueIndex = 0;
+  let successfulLeagues = 0;
+  const workerCount = Math.min(5, soccerLeagues.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextLeagueIndex < soccerLeagues.length) {
+      const league = soccerLeagues[nextLeagueIndex];
+      nextLeagueIndex += 1;
+      const url = new URL(`https://site.api.espn.com/apis/site/v2/sports/soccer/${league.id}/scoreboard`);
+      url.searchParams.set('dates', date);
+      url.searchParams.set('limit', '100');
+      try {
+        const response = await fetchImpl(url, { signal: AbortSignal.timeout(10_000) });
+        if (!response.ok) throw new Error(`ESPN ${response.status} (${league.id})`);
+        const payload = await response.json();
+        successfulLeagues += 1;
+        events.push(...(payload.events || [])
+          .map((event) => normalizeSoccerEvent(event, league))
+          .filter(Boolean));
+      } catch (error) {
+        console.error(`ESPN scoreboard request failed for ${league.id}:`, error.message);
+      }
+    }
+  });
+  await Promise.all(workers);
+
+  if (!successfulLeagues) throw new Error('ESPN ma\'lumotlarini hozir olib bo\'lmadi.');
+  events.sort((left, right) => new Date(left.startTime) - new Date(right.startTime));
+  const data = {
+    date,
+    leagues: soccerLeagues,
+    events,
+    partial: successfulLeagues < soccerLeagues.length
+  };
+  return data;
+}
+
+function fetchSoccerScoreboard(date, fetchImpl = fetch) {
+  if (!isValidScoreboardDate(date)) throw new Error('Sana YYYYMMDD ko\'rinishida bo\'lishi kerak.');
+  const cache = soccerScoreboardCache.get(date);
+  if (cache && cache.expiresAt > Date.now()) return Promise.resolve(cache.data);
+  const pendingRequest = soccerScoreboardRequests.get(date);
+  if (pendingRequest) return pendingRequest;
+
+  const request = loadSoccerScoreboard(date, fetchImpl)
+    .then((data) => {
+      soccerScoreboardCache.set(date, { data, expiresAt: Date.now() + scoreboardCacheTtlMs });
+      return data;
+    })
+    .finally(() => soccerScoreboardRequests.delete(date));
+  soccerScoreboardRequests.set(date, request);
+  return request;
+}
+
+app.get('/api/mini-app/scoreboard', async (req, res) => {
+  const date = String(req.query.date || '');
+  if (!isValidScoreboardDate(date)) {
+    return res.status(400).json({ ok: false, error: 'Sana YYYYMMDD formatida yuborilishi kerak.' });
+  }
+  try {
+    const scoreboard = await fetchSoccerScoreboard(date);
+    return res.status(200).json(scoreboard);
+  } catch (error) {
+    console.error('Soccer scoreboard request failed:', error.message);
+    return res.status(502).json({ ok: false, error: 'O\'yinlar ma\'lumotini olib bo\'lmadi. Keyinroq qayta urinib ko\'ring.' });
+  }
+});
 
 function verifyMiniAppInitData(initData, botToken = config.botToken, now = Date.now()) {
   if (typeof initData !== 'string' || !initData || initData.length > 4096) return null;
@@ -502,6 +653,14 @@ function getWebAppUrl() {
   return url || 'https://futbolimiz.uz';
 }
 
+function getMiniAppUrl() {
+  const url = new URL(getWebAppUrl());
+  url.pathname = '/mini-app/';
+  url.search = '';
+  url.hash = '';
+  return url.toString();
+}
+
 const persistentSessionStore = {
   async get(key) {
     const record = await Session.findOne({ key }).lean();
@@ -541,7 +700,7 @@ function welcomeMessage(ctx) {
 
 function welcomeMarkup(ctx) {
   const webAppButton = {
-    ...Markup.button.webApp('FUTBOLIMIZ UZ mini app', getWebAppUrl()),
+    ...Markup.button.webApp('FUTBOLIMIZ UZ mini app', getMiniAppUrl()),
     style: 'primary',
     icon_custom_emoji_id: '4974264726604219680'
   };
@@ -1139,7 +1298,7 @@ bot.command('app', async (ctx) => {
   return ctx.reply(
     'Mini Appni ochish uchun quyidagi tugmani bosing:',
     Markup.inlineKeyboard([[
-      Markup.button.webApp('FUTBOLIMIZ UZ mini app', getWebAppUrl())
+      Markup.button.webApp('FUTBOLIMIZ UZ mini app', getMiniAppUrl())
     ]])
   );
 });
@@ -2576,12 +2735,18 @@ if (require.main === module) {
 }
 
 module.exports = {
+  app,
   checkFullAdmin,
   createRequiredChatPickerKeyboard,
+  fetchSoccerScoreboard,
+  getMiniAppUrl,
   editCallbackMessage,
+  isValidScoreboardDate,
   mainMenuCommands,
+  normalizeSoccerEvent,
   openJoinRequestChatPicker,
   registerMainMenuCommands,
+  soccerLeagues,
   verifyMiniAppInitData
 };
 
