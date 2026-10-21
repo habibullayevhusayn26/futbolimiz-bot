@@ -1856,13 +1856,34 @@ async function ensureUser(ctx) {
 
 async function notifyNewSubscriber(ctx) {
   if (isAdmin(ctx)) return;
-  const count = await User.countDocuments();
+
+  const [count, admins] = await Promise.all([
+    User.countDocuments(),
+    Admin.find({ active: true }).lean()
+  ]);
+
   const nickname = escapeHtml(ctx.from.first_name || ctx.from.last_name || ctx.from.username || 'foydalanuvchi');
   const profileLink = `<a href="tg://user?id=${Number(ctx.from.id)}">${nickname}</a>`;
-  await bot.telegram.sendMessage(
-    ADMIN_TG_ID,
-    `Botga yangi obunachi qo'shildi: ${profileLink}\nObunachilar soni: ${count}`,
-    { parse_mode: 'HTML', protect_content: false }
+  const message = `Botga yangi obunachi qo'shildi: ${profileLink}\nObunachilar soni: ${count}`;
+  const adminIds = [...new Set([
+    Number(ADMIN_TG_ID),
+    ...admins.map((admin) => Number(admin.telegramId)),
+    ...Array.from(adminRegistry.values()).map((admin) => Number(admin.telegramId))
+  ].filter((id) => Number.isFinite(id) && id > 0))];
+
+  if (!adminIds.length) return;
+
+  await Promise.allSettled(
+    adminIds.map(async (adminId) => {
+      try {
+        await bot.telegram.sendMessage(adminId, message, {
+          parse_mode: 'HTML',
+          protect_content: false
+        });
+      } catch (error) {
+        console.error(`Admin notification failed for ${adminId}:`, error.response?.description || error.message);
+      }
+    })
   );
 }
 
@@ -2176,9 +2197,34 @@ bot.on('channel_post', handleChannelLinkCommand);
 bot.on('my_chat_member', async (ctx) => {
   const update = ctx.myChatMember;
   const chatId = update?.chat.id;
-  if (!chatId || !joinRequestChatIds.has(String(chatId))) return;
+  if (!chatId) return;
 
   const member = update.new_chat_member;
+  const canApproveRequests = member.status === 'creator' ||
+    (member.status === 'administrator' && member.can_invite_users === true);
+  if (update.chat.type === 'channel' && canApproveRequests) {
+    try {
+      const fields = {
+        title: update.chat.title || update.chat.username || String(chatId),
+        type: 'channel',
+        username: update.chat.username ? `@${update.chat.username}` : ''
+      };
+      const insertFields = { paused: false };
+      if (update.from?.id) insertFields.linkedBy = update.from.id;
+      await JoinRequestChat.findOneAndUpdate(
+        { chatId },
+        { $set: fields, $setOnInsert: insertFields },
+        { upsert: true, setDefaultsOnInsert: true }
+      );
+      joinRequestChatIds.add(String(chatId));
+      return;
+    } catch (error) {
+      console.error(`Automatic channel connection failed for ${chatId}:`, error.response?.description || error.message);
+      return;
+    }
+  }
+  if (!joinRequestChatIds.has(String(chatId))) return;
+
   const linkedChat = await JoinRequestChat.findOne({ chatId }).lean();
   if (!linkedChat) {
     joinRequestChatIds.delete(String(chatId));
@@ -2187,7 +2233,7 @@ bot.on('my_chat_member', async (ctx) => {
   const hasRequiredRights = member.status === 'creator' ||
     (member.status === 'administrator' &&
       member.can_invite_users === true &&
-      member.can_delete_messages === true);
+      (update.chat.type === 'channel' || member.can_delete_messages === true));
   if (hasRequiredRights) return;
 
   await JoinRequestChat.deleteOne({ chatId });
@@ -2753,7 +2799,7 @@ async function isChatAdministrator(ctx, chatId) {
 async function showJoinRequestChats(ctx) {
   const ownerChats = await JoinRequestChat.find({ linkedBy: ctx.from.id }).sort({ createdAt: -1 }).limit(50).lean();
   if (!ownerChats.length) {
-    return ctx.reply('Hali sizga ulangan chat yo\'q. Botni chatga administrator qiling va /connect buyrug\'ini yuboring.');
+    return ctx.reply('Hali sizga ulangan chat yo\'q. Botni kanalga qo\'shib, so\'rovlarni boshqarish uchun administrator qiling.');
   }
   const pendingCounts = await PendingJoinRequest.aggregate([
     { $match: { chatId: { $in: ownerChats.map((chat) => chat.chatId) } } },
