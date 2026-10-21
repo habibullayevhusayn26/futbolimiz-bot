@@ -2200,9 +2200,9 @@ bot.on('my_chat_member', async (ctx) => {
   if (!chatId) return;
 
   const member = update.new_chat_member;
-  const canApproveRequests = member.status === 'creator' ||
-    (member.status === 'administrator' && member.can_invite_users === true);
-  if (update.chat.type === 'channel' && canApproveRequests) {
+  const isChannelAdmin = update.chat.type === 'channel' &&
+    ['creator', 'administrator'].includes(member.status);
+  if (isChannelAdmin) {
     try {
       const fields = {
         title: update.chat.title || update.chat.username || String(chatId),
@@ -2217,6 +2217,18 @@ bot.on('my_chat_member', async (ctx) => {
         { upsert: true, setDefaultsOnInsert: true }
       );
       joinRequestChatIds.add(String(chatId));
+      if (member.status === 'administrator' &&
+          member.can_invite_users !== true &&
+          update.from?.id) {
+        try {
+          await ctx.telegram.sendMessage(
+            update.from.id,
+            `Bot kanalga avtomatik ulandi, ammo qo'shilish so'rovlarini qabul qilish uchun bot adminiga “Foydalanuvchilarni taklif qilish” huquqini ham yoqing.`
+          );
+        } catch (error) {
+          console.error(`Could not notify channel admin ${update.from.id} about missing invite permission:`, error.response?.description || error.message);
+        }
+      }
       return;
     } catch (error) {
       console.error(`Automatic channel connection failed for ${chatId}:`, error.response?.description || error.message);
