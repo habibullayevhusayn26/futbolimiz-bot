@@ -2074,8 +2074,8 @@ async function sendBroadcast(ctx) {
   let nextSendAt = 0;
   let progressMessageId = null;
   let progressUpdateChain = Promise.resolve();
-  const sendIntervalMs = 50;
-  const workerCount = Math.min(30, users.length);
+  const sendIntervalMs = 40;
+  const workerCount = Math.min(100, users.length);
 
   function getProgressText() {
     return `Xabar yuborilmoqda: ${processed} / ${users.length}\nYetib bordi: ${sent}\nXatolik: ${failed}`;
@@ -2139,9 +2139,19 @@ async function sendBroadcast(ctx) {
     console.error('Broadcast progress notification failed:', error.response?.description || error.message);
   }
 
+  const startedAt = Date.now();
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  const durationSeconds = Math.max((Date.now() - startedAt) / 1000, 0.001);
   await Broadcast.updateOne({ _id: log._id }, { $set: { sent, failed, blocked, removed } });
-  return { total: users.length, sent, failed, blocked, removed };
+  return {
+    total: users.length,
+    sent,
+    failed,
+    blocked,
+    removed,
+    durationSeconds,
+    messagesPerSecond: sent / durationSeconds
+  };
 }
 
 async function adminStats(ctx) {
@@ -3658,7 +3668,7 @@ bot.action('broadcast:send', async (ctx) => {
   reset(ctx);
   return ctx.telegram.sendMessage(
     ctx.from.id,
-    `Xabar yuborish yakunlandi.\nJami: ${result.total}\nYetib bordi: ${result.sent}\nBloklagan: ${result.blocked}\nBazadan o'chirildi: ${result.removed}\nXatolik: ${result.failed}`,
+    `Xabar yuborish yakunlandi.\nJami: ${result.total}\nYetib bordi: ${result.sent}\nBloklagan: ${result.blocked}\nBazadan o'chirildi: ${result.removed}\nXatolik: ${result.failed}\nTezlik: ${result.messagesPerSecond.toFixed(1)} xabar/soniya`,
     { reply_markup: adminKeyboard(ctx).reply_markup }
   );
 });
