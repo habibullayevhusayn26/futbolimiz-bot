@@ -1494,6 +1494,11 @@ function welcomeMarkup(ctx, liveStreams = soccerLiveStreams) {
       callback_data: 'welcome:applications',
       style: 'success',
       icon_custom_emoji_id: '5217943819311389632'
+    }],
+    [{
+      text: '✉️ Adminga xabar yuborish',
+      callback_data: 'user_command:contact_admin',
+      style: 'primary'
     }]
   );
   const bottomRow = [{
@@ -1967,7 +1972,6 @@ function broadcastCommandKeyboard() {
       Markup.button.callback('/mychats', 'broadcast:command:mychats'),
       Markup.button.callback('/help', 'broadcast:command:help')
     ],
-    [{ ...Markup.button.callback('✉️ Adminga xabar yuborish', 'broadcast:command:contact_admin'), style: 'success' }],
     [Markup.button.callback('❌ Bekor qilish', 'broadcast:cancel')]
   ]);
 }

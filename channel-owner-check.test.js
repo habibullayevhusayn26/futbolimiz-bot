@@ -141,10 +141,12 @@ test('registers a slash command for every main menu action', async () => {
 test('places chat connection and linked chat list under the green Zayafka button', () => {
   const startKeyboard = welcomeMarkup({ from: { id: 123 } }).inline_keyboard;
   const zayafkaButton = startKeyboard.flat().find((button) => button.callback_data === 'welcome:applications');
+  const contactAdminButton = startKeyboard.flat().find((button) => button.callback_data === 'user_command:contact_admin');
   const submenu = welcomeApplicationsMarkup().inline_keyboard;
 
   assert.equal(zayafkaButton.text, '📝 Zayafka');
   assert.equal(zayafkaButton.style, 'success');
+  assert.equal(contactAdminButton.text, '✉️ Adminga xabar yuborish');
   assert.equal(startKeyboard.flat().some((button) => button.callback_data === 'welcome:join_chat_connect'), false);
   assert.equal(startKeyboard.flat().some((button) => button.callback_data === 'welcome:required_list'), false);
   assert.equal(submenu.flat().find((button) => button.callback_data === 'welcome:join_chat_connect').style, 'success');
