@@ -25,6 +25,7 @@ const userSchema = new mongoose.Schema({
   favoriteSoccerMatchIds: { type: [String], default: [] },
   favoriteSoccerMatchDetails: { type: [favoriteSoccerMatchDetailSchema], default: [] },
   joinedAt: { type: Date, default: Date.now },
+  startedAt: { type: Date, default: null },
   lastActiveAt: { type: Date, default: Date.now }
 }, { versionKey: false });
 
@@ -750,6 +751,7 @@ function getSoccerMatchSubscribers(event) {
   const teamIds = [event.home.id, event.away.id].filter(Boolean);
   const matchIds = [String(event.id)];
   return User.find({
+    startedAt: { $ne: null },
     $or: [
       { favoriteSoccerTeamIds: { $in: teamIds } },
       { favoriteSoccerMatchIds: { $in: matchIds } }
@@ -1832,23 +1834,43 @@ async function hydrateSettings() {
   }
 }
 
-async function ensureUser(ctx) {
+async function ensureUser(ctx, started = false) {
   const telegramId = Number(ctx.from.id);
   const existingUser = await User.findOne({ telegramId }).lean();
+  const now = new Date();
   const userData = {
     username: ctx.from.username || '',
     nickname: ctx.from.first_name || ctx.from.last_name || '',
-    lastActiveAt: new Date()
+    lastActiveAt: now
   };
   if (existingUser) {
+    if (started && !existingUser.startedAt) {
+      const result = await User.updateOne(
+        { telegramId, startedAt: null },
+        { $set: { ...userData, startedAt: now, joinedAt: now } }
+      );
+      return { user: await User.findOne({ telegramId }).lean(), isNew: result.modifiedCount === 1 };
+    }
     await User.updateOne({ telegramId }, { $set: userData });
     return { user: { ...existingUser, ...userData }, isNew: false };
   }
   try {
-    const user = await User.create({ telegramId, ...userData });
-    return { user: user.toObject(), isNew: true };
+    const user = await User.create({
+      telegramId,
+      ...userData,
+      joinedAt: now,
+      startedAt: started ? now : null
+    });
+    return { user: user.toObject(), isNew: started };
   } catch (error) {
     if (error.code !== 11000) throw error;
+    if (started) {
+      const result = await User.updateOne(
+        { telegramId, startedAt: null },
+        { $set: { ...userData, startedAt: now, joinedAt: now } }
+      );
+      return { user: await User.findOne({ telegramId }).lean(), isNew: result.modifiedCount === 1 };
+    }
     await User.updateOne({ telegramId }, { $set: userData });
     return { user: await User.findOne({ telegramId }).lean(), isNew: false };
   }
@@ -1858,7 +1880,7 @@ async function notifyNewSubscriber(ctx) {
   if (isAdmin(ctx)) return;
 
   const [count, admins] = await Promise.all([
-    User.countDocuments(),
+    User.countDocuments({ startedAt: { $ne: null } }),
     Admin.find({ active: true }).lean()
   ]);
 
@@ -1996,28 +2018,67 @@ async function previewBroadcast(ctx) {
 async function sendBroadcast(ctx) {
   const broadcast = ctx.session?.broadcast;
   if (!broadcast) return ctx.reply('Xabar yuborish jarayoni topilmadi.');
-  const users = await User.find({}, { telegramId: 1 }).lean();
+  const users = await User.find({ startedAt: { $ne: null } }, { telegramId: 1 }).lean();
   const log = await Broadcast.create({ total: users.length });
   let sent = 0;
   let failed = 0;
   let blocked = 0;
   let processed = 0;
-  for (const user of users) {
-    try {
-      const chat = await bot.telegram.getChat(user.telegramId);
-      if (chat.type !== 'private') continue;
-      await sendBroadcastMessage(user.telegramId, broadcast);
-      sent += 1;
-    } catch (error) {
-      failed += 1;
-      if (error.response?.error_code === 403) blocked += 1;
-      console.error(`Broadcast to ${user.telegramId} failed:`, error.response?.description || error.message);
-    }
-    processed += 1;
-    if (processed % 25 === 0 || processed === users.length) {
-      await ctx.telegram.sendMessage(ctx.from.id, `Broadcast progress: ${processed} / ${users.length} yuborildi`, { protect_content: false });
+  let nextUserIndex = 0;
+  let nextSendAt = 0;
+  const sendIntervalMs = 50;
+  const workerCount = Math.min(20, users.length);
+
+  async function waitForSendSlot() {
+    const now = Date.now();
+    const waitMs = Math.max(0, nextSendAt - now);
+    nextSendAt = Math.max(now, nextSendAt) + sendIntervalMs;
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+
+  async function sendToUser(user) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await sendBroadcastMessage(user.telegramId, broadcast);
+        sent += 1;
+        return;
+      } catch (error) {
+        const errorCode = error.response?.error_code;
+        const retryAfter = Number(error.response?.parameters?.retry_after || error.parameters?.retry_after);
+        if (errorCode === 429 && Number.isFinite(retryAfter) && retryAfter > 0 && attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
+          continue;
+        }
+        failed += 1;
+        if (errorCode === 403) blocked += 1;
+        console.error(`Broadcast to ${user.telegramId} failed:`, error.response?.description || error.message);
+        return;
+      }
     }
   }
+
+  async function worker() {
+    while (nextUserIndex < users.length) {
+      const user = users[nextUserIndex];
+      nextUserIndex += 1;
+      await waitForSendSlot();
+      await sendToUser(user);
+      processed += 1;
+      if (processed % 25 === 0 || processed === users.length) {
+        try {
+          await ctx.telegram.sendMessage(
+            ctx.from.id,
+            `Broadcast progress: ${processed} / ${users.length} qayta ishlandi`,
+            { protect_content: false }
+          );
+        } catch (error) {
+          console.error('Broadcast progress notification failed:', error.response?.description || error.message);
+        }
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
   await Broadcast.updateOne({ _id: log._id }, { $set: { sent, failed, blocked } });
   return { total: users.length, sent, failed, blocked };
 }
@@ -2027,11 +2088,11 @@ async function adminStats(ctx) {
   const dayAgo = new Date(now - 24 * 60 * 60 * 1000);
   const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
   const [subscribers, newUsersDaily, newUsersWeekly, activeUsersDaily, activeUsersWeekly, broadcasts, linkedChats] = await Promise.all([
-    User.countDocuments(),
-    User.countDocuments({ joinedAt: { $gte: dayAgo } }),
-    User.countDocuments({ joinedAt: { $gte: weekAgo } }),
-    User.countDocuments({ lastActiveAt: { $gte: dayAgo } }),
-    User.countDocuments({ lastActiveAt: { $gte: weekAgo } }),
+    User.countDocuments({ startedAt: { $ne: null } }),
+    User.countDocuments({ startedAt: { $ne: null }, joinedAt: { $gte: dayAgo } }),
+    User.countDocuments({ startedAt: { $ne: null }, joinedAt: { $gte: weekAgo } }),
+    User.countDocuments({ startedAt: { $ne: null }, lastActiveAt: { $gte: dayAgo } }),
+    User.countDocuments({ startedAt: { $ne: null }, lastActiveAt: { $gte: weekAgo } }),
     Broadcast.aggregate([{ $group: { _id: null, total: { $sum: 1 }, sent: { $sum: '$sent' }, failed: { $sum: '$failed' }, blocked: { $sum: '$blocked' } } }]),
     JoinRequestChat.countDocuments()
   ]);
@@ -2046,7 +2107,7 @@ async function adminStats(ctx) {
 
 async function handleStart(ctx) {
   reset(ctx, true);
-  const registration = await ensureUser(ctx);
+  const registration = await ensureUser(ctx, true);
   if (registration.isNew) {
     try {
       await notifyNewSubscriber(ctx);
