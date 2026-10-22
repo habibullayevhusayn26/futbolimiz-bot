@@ -1967,6 +1967,7 @@ function broadcastCommandKeyboard() {
       Markup.button.callback('/mychats', 'broadcast:command:mychats'),
       Markup.button.callback('/help', 'broadcast:command:help')
     ],
+    [{ ...Markup.button.callback('✉️ Adminga xabar yuborish', 'broadcast:command:contact_admin'), style: 'success' }],
     [Markup.button.callback('❌ Bekor qilish', 'broadcast:cancel')]
   ]);
 }
@@ -2265,9 +2266,14 @@ bot.use(async (ctx, next) => {
   if (await requiredSubscription(ctx)) return next();
 });
 
-bot.action(/^user_command:(start|app|live|connect|mychats|help)$/, async (ctx) => {
+bot.action(/^user_command:(start|app|live|connect|mychats|help|contact_admin)$/, async (ctx) => {
   await ctx.answerCbQuery();
   const command = ctx.match[1];
+  if (command === 'contact_admin') {
+    if (ctx.chat?.type !== 'private') return ctx.reply('Adminga xabar yuborish uchun bot bilan shaxsiy chatga o‘ting.');
+    ctx.session.contactAdminPending = true;
+    return ctx.reply('Adminga yubormoqchi bo‘lgan xabaringizni yuboring. Matn, rasm, video, ovozli xabar va boshqa xabar turlarini qabul qilaman. Bekor qilish: /cancel');
+  }
   const originalReply = ctx.reply;
   ctx.reply = async (text, extra = {}) => ctx.telegram.sendMessage(
     ctx.from.id,
@@ -2293,6 +2299,87 @@ bot.action(/^user_command:(start|app|live|connect|mychats|help)$/, async (ctx) =
   } finally {
     ctx.reply = originalReply;
   }
+});
+
+bot.on('message', async (ctx, next) => {
+  if (!ctx.session?.contactAdminPending || ctx.chat?.type !== 'private' || !ctx.message) return next();
+  if (ctx.message.text?.trim().toLowerCase() === '/cancel') {
+    delete ctx.session.contactAdminPending;
+    return ctx.reply('Adminga xabar yuborish bekor qilindi.');
+  }
+
+  delete ctx.session.contactAdminPending;
+  const admins = await Admin.find({ active: true }, { telegramId: 1 }).lean();
+  const adminIds = [...new Set([
+    Number(ADMIN_TG_ID),
+    ...admins.map((admin) => Number(admin.telegramId)),
+    ...Array.from(adminRegistry.values())
+      .filter((admin) => admin.active)
+      .map((admin) => Number(admin.telegramId))
+  ].filter((id) => Number.isSafeInteger(id) && id > 0))];
+  let delivered = 0;
+  let pinned = 0;
+  const senderName = [
+    ctx.from.first_name,
+    ctx.from.last_name
+  ].filter(Boolean).join(' ') || ctx.from.username || 'Nomaʼlum foydalanuvchi';
+  const senderLabel = [
+    `Foydalanuvchidan yangi xabar: ${senderName}`,
+    ctx.from.username ? `@${ctx.from.username}` : null,
+    `ID: ${ctx.from.id}`
+  ].filter(Boolean).join('\n');
+
+  for (const adminId of adminIds) {
+    try {
+      await ctx.telegram.sendMessage(adminId, senderLabel, { protect_content: false });
+    } catch (error) {
+      console.error(`Could not send user identity to admin ${adminId}:`, error.response?.description || error.message);
+    }
+
+    let forwardedMessageId;
+    try {
+      const forwarded = await ctx.telegram.forwardMessage(
+        adminId,
+        ctx.chat.id,
+        ctx.message.message_id
+      );
+      forwardedMessageId = forwarded.message_id;
+    } catch (forwardError) {
+      try {
+        const copied = await ctx.telegram.copyMessage(
+          adminId,
+          ctx.chat.id,
+          ctx.message.message_id
+        );
+        forwardedMessageId = copied.message_id;
+      } catch (copyError) {
+        console.error(
+          `User message delivery to admin ${adminId} failed:`,
+          copyError.response?.description || copyError.message,
+          `(forward error: ${forwardError.response?.description || forwardError.message})`
+        );
+        continue;
+      }
+    }
+
+    delivered += 1;
+    try {
+      await ctx.telegram.pinChatMessage(adminId, forwardedMessageId, {
+        disable_notification: true
+      });
+      pinned += 1;
+    } catch (error) {
+      console.error(`Could not pin user message in admin chat ${adminId}:`, error.response?.description || error.message);
+    }
+  }
+
+  if (!delivered) {
+    return ctx.reply('Xabaringiz adminlarga yetkazilmadi. Iltimos, keyinroq qayta urinib ko‘ring.');
+  }
+  if (pinned === delivered) {
+    return ctx.reply('Xabaringiz barcha faol adminlarga yuborildi va admin chatlarida pin qilindi.');
+  }
+  return ctx.reply(`Xabar ${delivered} ta faol admin chatiga yuborildi; ${pinned} tasida pin qilindi.`);
 });
 
 bot.command('app', async (ctx) => {
