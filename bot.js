@@ -48,6 +48,7 @@ const broadcastSchema = new mongoose.Schema({
   sent: { type: Number, default: 0 },
   failed: { type: Number, default: 0 },
   blocked: { type: Number, default: 0 },
+  removed: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now }
 }, { versionKey: false });
 
@@ -746,6 +747,27 @@ function getSoccerMatchKey(event) {
   return `${event.leagueId}:${event.id}`;
 }
 
+function isUndeliverableUserError(error) {
+  if (error.response?.error_code === 403) return true;
+  if (error.response?.error_code !== 400) return false;
+  return /chat not found|user not found|user is deactivated|can't initiate conversation|cannot initiate conversation/i
+    .test(error.response?.description || error.message || '');
+}
+
+async function removeUndeliverableUser(telegramId, error, source) {
+  if (!isUndeliverableUserError(error)) return false;
+  try {
+    const result = await User.deleteOne({ telegramId });
+    return result.deletedCount === 1;
+  } catch (deleteError) {
+    console.error(
+      `Could not remove undeliverable user ${telegramId} after ${source}:`,
+      deleteError.response?.description || deleteError.message
+    );
+    return false;
+  }
+}
+
 function getSoccerMatchSubscribers(event) {
   const teamIds = [event.home.id, event.away.id].filter(Boolean);
   const matchIds = [String(event.id)];
@@ -830,12 +852,13 @@ async function sendSoccerMatchNotification(event, phase, heading) {
       deliveredThisPass += 1;
     } catch (error) {
       failedThisPass += 1;
-      if ([400, 403].includes(error.response?.error_code)) {
+      if (isUndeliverableUserError(error)) {
         await SoccerMatchNotification.updateOne(
           { eventKey },
           { $addToSet: { blockedUserIds: user.telegramId }, $set: { updatedAt: new Date() } }
         );
         blockedUserIds.add(user.telegramId);
+        await removeUndeliverableUser(user.telegramId, error, 'live match notification');
       }
       console.error(`Live match notification ${eventKey} to ${user.telegramId} failed:`, error.response?.description || error.message);
     }
@@ -2045,6 +2068,7 @@ async function sendBroadcast(ctx) {
   let sent = 0;
   let failed = 0;
   let blocked = 0;
+  let removed = 0;
   let processed = 0;
   let nextUserIndex = 0;
   let nextSendAt = 0;
@@ -2091,6 +2115,7 @@ async function sendBroadcast(ctx) {
         }
         failed += 1;
         if (errorCode === 403) blocked += 1;
+        if (await removeUndeliverableUser(user.telegramId, error, 'broadcast')) removed += 1;
         console.error(`Broadcast to ${user.telegramId} failed:`, error.response?.description || error.message);
         return;
       }
@@ -2115,8 +2140,8 @@ async function sendBroadcast(ctx) {
   }
 
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  await Broadcast.updateOne({ _id: log._id }, { $set: { sent, failed, blocked } });
-  return { total: users.length, sent, failed, blocked };
+  await Broadcast.updateOne({ _id: log._id }, { $set: { sent, failed, blocked, removed } });
+  return { total: users.length, sent, failed, blocked, removed };
 }
 
 async function adminStats(ctx) {
@@ -2129,15 +2154,15 @@ async function adminStats(ctx) {
     User.countDocuments({ joinedAt: { $gte: weekAgo } }),
     User.countDocuments({ lastActiveAt: { $gte: dayAgo } }),
     User.countDocuments({ lastActiveAt: { $gte: weekAgo } }),
-    Broadcast.aggregate([{ $group: { _id: null, total: { $sum: 1 }, sent: { $sum: '$sent' }, failed: { $sum: '$failed' }, blocked: { $sum: '$blocked' } } }]),
+    Broadcast.aggregate([{ $group: { _id: null, total: { $sum: 1 }, sent: { $sum: '$sent' }, failed: { $sum: '$failed' }, blocked: { $sum: '$blocked' }, removed: { $sum: '$removed' } } }]),
     JoinRequestChat.countDocuments()
   ]);
-  const broadcastStats = broadcasts[0] || { total: 0, sent: 0, failed: 0, blocked: 0 };
+  const broadcastStats = broadcasts[0] || { total: 0, sent: 0, failed: 0, blocked: 0, removed: 0 };
   return ctx.reply(`<tg-emoji emoji-id="5244825199278311613">📊</tg-emoji> Bot statistikasi\n\n` +
     `<blockquote>Obunachilar jami: ${subscribers}\nYangi userlar (24 soat / 7 kun): ${newUsersDaily} / ${newUsersWeekly}\n` +
     `Faol userlar (24 soat / 7 kun): ${activeUsersDaily} / ${activeUsersWeekly}\n` +
     `Jami ulangan chatlar: ${linkedChats}</blockquote>\n\n` +
-    `<blockquote>Broadcastlar: ${broadcastStats.total}\nYetib borgan: ${broadcastStats.sent}\nBloklagan: ${broadcastStats.blocked}\nXatolik: ${broadcastStats.failed}</blockquote>`,
+    `<blockquote>Broadcastlar: ${broadcastStats.total}\nYetib borgan: ${broadcastStats.sent}\nBloklagan: ${broadcastStats.blocked}\nBazadan o'chirilgan: ${broadcastStats.removed}\nXatolik: ${broadcastStats.failed}</blockquote>`,
     replyOptions(adminKeyboard(ctx).reply_markup));
 }
 
@@ -3633,7 +3658,7 @@ bot.action('broadcast:send', async (ctx) => {
   reset(ctx);
   return ctx.telegram.sendMessage(
     ctx.from.id,
-    `Xabar yuborish yakunlandi.\nJami: ${result.total}\nYetib bordi: ${result.sent}\nBloklagan: ${result.blocked}\nXatolik: ${result.failed}`,
+    `Xabar yuborish yakunlandi.\nJami: ${result.total}\nYetib bordi: ${result.sent}\nBloklagan: ${result.blocked}\nBazadan o'chirildi: ${result.removed}\nXatolik: ${result.failed}`,
     { reply_markup: adminKeyboard(ctx).reply_markup }
   );
 });
