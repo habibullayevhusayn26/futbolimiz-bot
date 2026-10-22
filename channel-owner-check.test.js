@@ -133,7 +133,7 @@ test('registers a slash command for every main menu action', async () => {
 
   assert.deepEqual(
     mainMenuCommands.map(({ command }) => command),
-    ['start', 'app', 'connect', 'mychats', 'help', 'admin']
+    ['start', 'app', 'live', 'connect', 'mychats', 'help', 'support', 'admin']
   );
   assert.deepEqual(calls, [mainMenuCommands]);
 });

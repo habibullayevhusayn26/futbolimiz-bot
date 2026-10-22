@@ -1242,6 +1242,7 @@ const mainMenuCommands = [
   { command: 'connect', description: 'Kanal yoki guruhni ulash' },
   { command: 'mychats', description: 'Ulangan kanal va guruhlar' },
   { command: 'help', description: 'Yordam' },
+  { command: 'support', description: 'Adminga xabar yuborish' },
   { command: 'admin', description: 'Admin panel' }
 ];
 const adminPermissions = ['broadcast', 'stats', 'settings', 'join_requests', 'admins'];
@@ -2274,9 +2275,7 @@ bot.action(/^user_command:(start|app|live|connect|mychats|help|contact_admin)$/,
   await ctx.answerCbQuery();
   const command = ctx.match[1];
   if (command === 'contact_admin') {
-    if (ctx.chat?.type !== 'private') return ctx.reply('Adminga xabar yuborish uchun bot bilan shaxsiy chatga o‘ting.');
-    ctx.session.contactAdminPending = true;
-    return ctx.reply('Adminga yubormoqchi bo‘lgan xabaringizni yuboring. Matn, rasm, video, ovozli xabar va boshqa xabar turlarini qabul qilaman. Bekor qilish: /cancel');
+    return startContactAdminConversation(ctx);
   }
   const originalReply = ctx.reply;
   ctx.reply = async (text, extra = {}) => ctx.telegram.sendMessage(
@@ -2304,6 +2303,16 @@ bot.action(/^user_command:(start|app|live|connect|mychats|help|contact_admin)$/,
     ctx.reply = originalReply;
   }
 });
+
+async function startContactAdminConversation(ctx) {
+  if (ctx.chat?.type !== 'private') {
+    return ctx.reply('Adminga xabar yuborish uchun bot bilan shaxsiy chatga o‘ting.');
+  }
+  ctx.session.contactAdminPending = true;
+  return ctx.reply('Adminga yubormoqchi bo‘lgan xabaringizni yuboring. Matn, rasm, video, ovozli xabar va boshqa xabar turlarini qabul qilaman. Bekor qilish: /cancel');
+}
+
+bot.command('support', startContactAdminConversation);
 
 bot.on('message', async (ctx, next) => {
   if (!ctx.session?.contactAdminPending || ctx.chat?.type !== 'private' || !ctx.message) return next();
