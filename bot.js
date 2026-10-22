@@ -1930,11 +1930,38 @@ function broadcastButtonTypeKeyboard() {
       { ...Markup.button.callback('🔗 Odatdagi link', 'broadcast:type:url'), style: 'primary' },
       { ...Markup.button.callback('🚀 Mini App', 'broadcast:type:web_app'), style: 'success' }
     ],
+    [{ ...Markup.button.callback('⚙️ Bot buyrug‘i', 'broadcast:type:command'), style: 'primary' }],
     [{ ...Markup.button.callback('❌ Bekor qilish', 'broadcast:cancel'), style: 'danger' }]
   ]);
 }
 
+function broadcastCommandKeyboard() {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback('/start', 'broadcast:command:start'),
+      Markup.button.callback('/app', 'broadcast:command:app')
+    ],
+    [
+      Markup.button.callback('/live', 'broadcast:command:live'),
+      Markup.button.callback('/connect', 'broadcast:command:connect')
+    ],
+    [
+      Markup.button.callback('/mychats', 'broadcast:command:mychats'),
+      Markup.button.callback('/help', 'broadcast:command:help')
+    ],
+    [Markup.button.callback('❌ Bekor qilish', 'broadcast:cancel')]
+  ]);
+}
+
 function buildBroadcastInlineButton(text, url, kind = 'url', style, iconCustomEmojiId) {
+  if (kind === 'command') {
+    return {
+      text,
+      callback_data: `user_command:${url}`,
+      style,
+      ...(iconCustomEmojiId ? { icon_custom_emoji_id: iconCustomEmojiId } : {})
+    };
+  }
   const resolvedUrl = kind === 'web_app' ? (url || getWebAppUrl()) : url;
   const button = kind === 'web_app' ? Markup.button.webApp(text, resolvedUrl) : Markup.button.url(text, resolvedUrl);
   return {
@@ -2252,6 +2279,36 @@ bot.command('disconnect', async (ctx) => {
 
 bot.command('mychats', showJoinRequestChats);
 bot.command('help', (ctx) => ctx.reply(configuredMessage('help', ctx), replyOptions()));
+
+bot.action(/^user_command:(start|app|live|connect|mychats|help)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  const command = ctx.match[1];
+  const originalReply = ctx.reply;
+  ctx.reply = (text, extra = {}) => ctx.telegram.sendMessage(
+    ctx.from.id,
+    text,
+    { ...addNavigationControls(extra), protect_content: !isAdmin(ctx) }
+  );
+  try {
+    if (command === 'start') return await handleStart(ctx);
+    if (command === 'app') {
+      return await ctx.reply(
+        'Mini Appni ochish uchun quyidagi tugmani bosing:',
+        Markup.inlineKeyboard([[
+          Markup.button.webApp('FUTBOLIMIZ UZ mini app', getMiniAppUrl())
+        ]])
+      );
+    }
+    if (command === 'live') {
+      return await ctx.reply(liveStreamsMessage(), replyOptions(liveStreamsKeyboard()));
+    }
+    if (command === 'connect') return await openJoinRequestChatPicker(ctx);
+    if (command === 'mychats') return await showJoinRequestChats(ctx);
+    return await ctx.reply(configuredMessage('help', ctx), replyOptions());
+  } finally {
+    ctx.reply = originalReply;
+  }
+});
 
 bot.on('channel_post', handleChannelLinkCommand);
 
@@ -3504,10 +3561,14 @@ bot.action('broadcast:add_button', async (ctx) => {
   return ctx.reply('Inline tugma nomini yuboring (1–64 belgi). Premium emoji yuborsangiz, u tugma ikonkasiga aylanadi:');
 });
 
-bot.action(/^broadcast:type:(url|web_app)$/, async (ctx) => {
+bot.action(/^broadcast:type:(url|web_app|command)$/, async (ctx) => {
   await ctx.answerCbQuery();
   if (!isAdmin(ctx) || ctx.session?.step !== 'broadcast_button_type') return ctx.reply('Tugma turi tanlash bosqichi topilmadi.');
   ctx.session.pendingButtonType = ctx.match[1];
+  if (ctx.match[1] === 'command') {
+    ctx.session.step = 'broadcast_button_command';
+    return ctx.reply('Tugma bosilganda bajariladigan buyruqni tanlang:', broadcastCommandKeyboard());
+  }
   if (ctx.match[1] === 'web_app') {
     ctx.session.pendingButtonUrl = getWebAppUrl();
     ctx.session.step = 'broadcast_button_color';
@@ -3515,6 +3576,16 @@ bot.action(/^broadcast:type:(url|web_app)$/, async (ctx) => {
   }
   ctx.session.step = 'broadcast_button_url';
   return ctx.reply('Tugma havolasini yuboring (https://...):');
+});
+
+bot.action(/^broadcast:command:(start|app|live|connect|mychats|help)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isAdmin(ctx) || ctx.session?.step !== 'broadcast_button_command') {
+    return ctx.reply('Avval inline tugma uchun bot buyrug‘ini tanlang.');
+  }
+  ctx.session.pendingButtonCommand = ctx.match[1];
+  ctx.session.step = 'broadcast_button_color';
+  return ctx.reply('Tugma rangini tanlang:', broadcastColorKeyboard());
 });
 
 bot.action('broadcast:preview', async (ctx) => {
@@ -3530,7 +3601,7 @@ bot.action(/^broadcast:color:(blue|green|red)$/, async (ctx) => {
   const kind = ctx.session.pendingButtonType || 'url';
   const button = buildBroadcastInlineButton(
     ctx.session.pendingButtonText,
-    ctx.session.pendingButtonUrl,
+    kind === 'command' ? ctx.session.pendingButtonCommand : ctx.session.pendingButtonUrl,
     kind,
     style,
     ctx.session.pendingButtonEmojiId
@@ -3538,6 +3609,7 @@ bot.action(/^broadcast:color:(blue|green|red)$/, async (ctx) => {
   ctx.session.broadcast.buttons.push([button]);
   ctx.session.pendingButtonText = undefined;
   ctx.session.pendingButtonUrl = undefined;
+  ctx.session.pendingButtonCommand = undefined;
   ctx.session.pendingButtonType = undefined;
   ctx.session.pendingButtonEmojiId = undefined;
   ctx.session.step = 'broadcast_buttons';
@@ -3888,9 +3960,13 @@ bot.on('text', async (ctx) => {
     return ctx.reply('Tugma turini tanlang:', broadcastButtonTypeKeyboard());
   }
   if (step === 'broadcast_button_type') {
-    const isKnownType = value === 'url' || value === 'web_app';
+    const isKnownType = value === 'url' || value === 'web_app' || value === 'command';
     if (!isKnownType) return ctx.reply('Tugma turini quyidagi tugmalar yordamida tanlang:');
     ctx.session.pendingButtonType = value;
+    if (value === 'command') {
+      ctx.session.step = 'broadcast_button_command';
+      return ctx.reply('Tugma bosilganda bajariladigan buyruqni tanlang:', broadcastCommandKeyboard());
+    }
     if (value === 'web_app') {
       ctx.session.pendingButtonUrl = getWebAppUrl();
       ctx.session.step = 'broadcast_button_color';
