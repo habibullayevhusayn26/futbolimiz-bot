@@ -1007,21 +1007,17 @@ app.post('/api/mini-app/visit', async (req, res) => {
 
   const now = new Date();
   const user = verified.user;
-  const userUpdate = {
-    $set: {
-      username: user.username || '',
-      nickname: [user.first_name, user.last_name].filter(Boolean).join(' ') || '',
-      lastActiveAt: now
-    },
-    $setOnInsert: { telegramId: user.id, joinedAt: now }
-  };
   try {
-    try {
-      await User.updateOne({ telegramId: user.id }, userUpdate, { upsert: true });
-    } catch (error) {
-      if (error.code !== 11000) throw error;
-      await User.updateOne({ telegramId: user.id }, { $set: userUpdate.$set });
-    }
+    await User.updateOne(
+      { telegramId: user.id },
+      {
+        $set: {
+          username: user.username || '',
+          nickname: [user.first_name, user.last_name].filter(Boolean).join(' ') || '',
+          lastActiveAt: now
+        }
+      }
+    );
     await MiniAppVisit.create({
       telegramId: user.id,
       visitedAt: now,
@@ -1071,8 +1067,8 @@ app.post('/api/mini-app/notification-preferences', async (req, res) => {
 
     const field = req.body.kind === 'team' ? 'favoriteSoccerTeamIds' : 'favoriteSoccerMatchIds';
     const update = req.body.enabled
-      ? { $addToSet: { [field]: req.body.id }, $setOnInsert: { telegramId: verified.user.id } }
-      : { $pull: { [field]: req.body.id }, $setOnInsert: { telegramId: verified.user.id } };
+      ? { $addToSet: { [field]: req.body.id } }
+      : { $pull: { [field]: req.body.id } };
     if (req.body.kind === 'match' && req.body.enabled && eventDetails) {
       update.$addToSet.favoriteSoccerMatchDetails = {
         id: req.body.id,
@@ -1087,8 +1083,14 @@ app.post('/api/mini-app/notification-preferences', async (req, res) => {
     const user = await User.findOneAndUpdate(
       { telegramId: verified.user.id },
       update,
-      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+      { returnDocument: 'after' }
     ).lean();
+    if (!user) {
+      return res.status(409).json({
+        ok: false,
+        error: 'Avval botga /start yuboring.'
+      });
+    }
     return res.status(200).json({
       favoriteTeamIds: user.favoriteSoccerTeamIds || [],
       favoriteMatchIds: user.favoriteSoccerMatchIds || [],
@@ -1835,23 +1837,38 @@ async function hydrateSettings() {
 async function ensureUser(ctx) {
   const telegramId = Number(ctx.from.id);
   const existingUser = await User.findOne({ telegramId }).lean();
+  const now = new Date();
   const userData = {
     username: ctx.from.username || '',
     nickname: ctx.from.first_name || ctx.from.last_name || '',
-    lastActiveAt: new Date()
+    lastActiveAt: now
   };
   if (existingUser) {
-    await User.updateOne({ telegramId }, { $set: userData });
+    await User.updateOne({ telegramId }, { $set: { ...userData, joinedAt: existingUser.joinedAt || now } });
     return { user: { ...existingUser, ...userData }, isNew: false };
   }
   try {
-    const user = await User.create({ telegramId, ...userData });
+    const user = await User.create({ telegramId, ...userData, joinedAt: now });
     return { user: user.toObject(), isNew: true };
   } catch (error) {
     if (error.code !== 11000) throw error;
     await User.updateOne({ telegramId }, { $set: userData });
     return { user: await User.findOne({ telegramId }).lean(), isNew: false };
   }
+}
+
+async function updateExistingUserActivity(ctx) {
+  if (!ctx.from?.id) return;
+  await User.updateOne(
+    { telegramId: Number(ctx.from.id) },
+    {
+      $set: {
+        username: ctx.from.username || '',
+        nickname: ctx.from.first_name || ctx.from.last_name || '',
+        lastActiveAt: new Date()
+      }
+    }
+  );
 }
 
 async function notifyNewSubscriber(ctx) {
@@ -1908,11 +1925,38 @@ function broadcastButtonTypeKeyboard() {
       { ...Markup.button.callback('🔗 Odatdagi link', 'broadcast:type:url'), style: 'primary' },
       { ...Markup.button.callback('🚀 Mini App', 'broadcast:type:web_app'), style: 'success' }
     ],
+    [{ ...Markup.button.callback('⚙️ Bot buyrug‘i', 'broadcast:type:command'), style: 'primary' }],
     [{ ...Markup.button.callback('❌ Bekor qilish', 'broadcast:cancel'), style: 'danger' }]
   ]);
 }
 
+function broadcastCommandKeyboard() {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback('/start', 'broadcast:command:start'),
+      Markup.button.callback('/app', 'broadcast:command:app')
+    ],
+    [
+      Markup.button.callback('/live', 'broadcast:command:live'),
+      Markup.button.callback('/connect', 'broadcast:command:connect')
+    ],
+    [
+      Markup.button.callback('/mychats', 'broadcast:command:mychats'),
+      Markup.button.callback('/help', 'broadcast:command:help')
+    ],
+    [Markup.button.callback('❌ Bekor qilish', 'broadcast:cancel')]
+  ]);
+}
+
 function buildBroadcastInlineButton(text, url, kind = 'url', style, iconCustomEmojiId) {
+  if (kind === 'command') {
+    return {
+      text,
+      callback_data: `user_command:${url}`,
+      style,
+      ...(iconCustomEmojiId ? { icon_custom_emoji_id: iconCustomEmojiId } : {})
+    };
+  }
   const resolvedUrl = kind === 'web_app' ? (url || getWebAppUrl()) : url;
   const button = kind === 'web_app' ? Markup.button.webApp(text, resolvedUrl) : Markup.button.url(text, resolvedUrl);
   return {
@@ -2002,22 +2046,75 @@ async function sendBroadcast(ctx) {
   let failed = 0;
   let blocked = 0;
   let processed = 0;
-  for (const user of users) {
-    try {
-      const chat = await bot.telegram.getChat(user.telegramId);
-      if (chat.type !== 'private') continue;
-      await sendBroadcastMessage(user.telegramId, broadcast);
-      sent += 1;
-    } catch (error) {
-      failed += 1;
-      if (error.response?.error_code === 403) blocked += 1;
-      console.error(`Broadcast to ${user.telegramId} failed:`, error.response?.description || error.message);
-    }
-    processed += 1;
-    if (processed % 25 === 0 || processed === users.length) {
-      await ctx.telegram.sendMessage(ctx.from.id, `Broadcast progress: ${processed} / ${users.length} yuborildi`, { protect_content: false });
+  let nextUserIndex = 0;
+  let nextSendAt = 0;
+  let progressMessageId = null;
+  let progressUpdateChain = Promise.resolve();
+  const sendIntervalMs = 50;
+  const workerCount = Math.min(30, users.length);
+
+  function getProgressText() {
+    return `Xabar yuborilmoqda: ${processed} / ${users.length}\nYetib bordi: ${sent}\nXatolik: ${failed}`;
+  }
+
+  async function waitForSendSlot() {
+    const now = Date.now();
+    const waitMs = Math.max(0, nextSendAt - now);
+    nextSendAt = Math.max(now, nextSendAt) + sendIntervalMs;
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+
+  async function updateProgress() {
+    const text = getProgressText();
+    progressUpdateChain = progressUpdateChain.then(async () => {
+      if (!progressMessageId) return;
+      await ctx.telegram.editMessageText(ctx.from.id, progressMessageId, undefined, text);
+    }).catch((error) => {
+      console.error('Broadcast progress update failed:', error.response?.description || error.message);
+    });
+    await progressUpdateChain;
+  }
+
+  async function sendToUser(user) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await waitForSendSlot();
+      try {
+        await sendBroadcastMessage(user.telegramId, broadcast);
+        sent += 1;
+        return;
+      } catch (error) {
+        const errorCode = error.response?.error_code;
+        const retryAfter = Number(error.response?.parameters?.retry_after || error.parameters?.retry_after);
+        if (errorCode === 429 && Number.isFinite(retryAfter) && retryAfter > 0 && attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
+          continue;
+        }
+        failed += 1;
+        if (errorCode === 403) blocked += 1;
+        console.error(`Broadcast to ${user.telegramId} failed:`, error.response?.description || error.message);
+        return;
+      }
     }
   }
+
+  async function worker() {
+    while (nextUserIndex < users.length) {
+      const user = users[nextUserIndex];
+      nextUserIndex += 1;
+      await sendToUser(user);
+      processed += 1;
+      if (processed % 25 === 0 || processed === users.length) await updateProgress();
+    }
+  }
+
+  try {
+    const progressMessage = await ctx.telegram.sendMessage(ctx.from.id, getProgressText(), { protect_content: false });
+    progressMessageId = progressMessage.message_id;
+  } catch (error) {
+    console.error('Broadcast progress notification failed:', error.response?.description || error.message);
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
   await Broadcast.updateOne({ _id: log._id }, { $set: { sent, failed, blocked } });
   return { total: users.length, sent, failed, blocked };
 }
@@ -2114,7 +2211,7 @@ bot.use(async (ctx, next) => {
   if (ctx.chatJoinRequest || ctx.myChatMember || isChatCommand) return next();
   if (/^\/(?:connect|disconnect|mychats)(?:@\w+)?(?:\s|$)/i.test(ctx.message?.text || '') ||
       /^(?:join_chat:|join_request:)/.test(ctx.callbackQuery?.data || '')) return next();
-  if (ctx.from && ctx.message?.text !== '/start') await ensureUser(ctx);
+  if (ctx.from && ctx.message?.text !== '/start') await updateExistingUserActivity(ctx);
   if (ctx.callbackQuery?.data === 'check_subscription') return next();
   if (ctx.callbackQuery?.data && isAdmin(ctx) &&
       /^(?:admin:|broadcast:)/.test(ctx.callbackQuery.data) &&
@@ -2131,6 +2228,36 @@ bot.use(async (ctx, next) => {
   }
   if (isAdmin(ctx)) return next();
   if (await requiredSubscription(ctx)) return next();
+});
+
+bot.action(/^user_command:(start|app|live|connect|mychats|help)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  const command = ctx.match[1];
+  const originalReply = ctx.reply;
+  ctx.reply = async (text, extra = {}) => ctx.telegram.sendMessage(
+    ctx.from.id,
+    text,
+    { ...addNavigationControls(extra), protect_content: !isAdmin(ctx) }
+  );
+  try {
+    if (command === 'start') return await handleStart(ctx);
+    if (command === 'app') {
+      return await ctx.reply(
+        'Mini Appni ochish uchun quyidagi tugmani bosing:',
+        Markup.inlineKeyboard([[
+          Markup.button.webApp('FUTBOLIMIZ UZ mini app', getMiniAppUrl())
+        ]])
+      );
+    }
+    if (command === 'live') {
+      return await ctx.reply(liveStreamsMessage(), replyOptions(liveStreamsKeyboard()));
+    }
+    if (command === 'connect') return await openJoinRequestChatPicker(ctx);
+    if (command === 'mychats') return await showJoinRequestChats(ctx);
+    return await ctx.reply(configuredMessage('help', ctx), replyOptions());
+  } finally {
+    ctx.reply = originalReply;
+  }
 });
 
 bot.command('app', async (ctx) => {
@@ -3443,10 +3570,14 @@ bot.action('broadcast:add_button', async (ctx) => {
   return ctx.reply('Inline tugma nomini yuboring (1–64 belgi). Premium emoji yuborsangiz, u tugma ikonkasiga aylanadi:');
 });
 
-bot.action(/^broadcast:type:(url|web_app)$/, async (ctx) => {
+bot.action(/^broadcast:type:(url|web_app|command)$/, async (ctx) => {
   await ctx.answerCbQuery();
   if (!isAdmin(ctx) || ctx.session?.step !== 'broadcast_button_type') return ctx.reply('Tugma turi tanlash bosqichi topilmadi.');
   ctx.session.pendingButtonType = ctx.match[1];
+  if (ctx.match[1] === 'command') {
+    ctx.session.step = 'broadcast_button_command';
+    return ctx.reply('Tugma bosilganda bajariladigan buyruqni tanlang:', broadcastCommandKeyboard());
+  }
   if (ctx.match[1] === 'web_app') {
     ctx.session.pendingButtonUrl = getWebAppUrl();
     ctx.session.step = 'broadcast_button_color';
@@ -3454,6 +3585,16 @@ bot.action(/^broadcast:type:(url|web_app)$/, async (ctx) => {
   }
   ctx.session.step = 'broadcast_button_url';
   return ctx.reply('Tugma havolasini yuboring (https://...):');
+});
+
+bot.action(/^broadcast:command:(start|app|live|connect|mychats|help)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isAdmin(ctx) || ctx.session?.step !== 'broadcast_button_command') {
+    return ctx.reply('Avval inline tugma uchun bot buyrug‘ini tanlang.');
+  }
+  ctx.session.pendingButtonCommand = ctx.match[1];
+  ctx.session.step = 'broadcast_button_color';
+  return ctx.reply('Tugma rangini tanlang:', broadcastColorKeyboard());
 });
 
 bot.action('broadcast:preview', async (ctx) => {
@@ -3469,7 +3610,7 @@ bot.action(/^broadcast:color:(blue|green|red)$/, async (ctx) => {
   const kind = ctx.session.pendingButtonType || 'url';
   const button = buildBroadcastInlineButton(
     ctx.session.pendingButtonText,
-    ctx.session.pendingButtonUrl,
+    kind === 'command' ? ctx.session.pendingButtonCommand : ctx.session.pendingButtonUrl,
     kind,
     style,
     ctx.session.pendingButtonEmojiId
@@ -3477,6 +3618,7 @@ bot.action(/^broadcast:color:(blue|green|red)$/, async (ctx) => {
   ctx.session.broadcast.buttons.push([button]);
   ctx.session.pendingButtonText = undefined;
   ctx.session.pendingButtonUrl = undefined;
+  ctx.session.pendingButtonCommand = undefined;
   ctx.session.pendingButtonType = undefined;
   ctx.session.pendingButtonEmojiId = undefined;
   ctx.session.step = 'broadcast_buttons';
@@ -3489,7 +3631,11 @@ bot.action('broadcast:send', async (ctx) => {
   const result = await sendBroadcast(ctx);
   await logAdminAction(ctx, 'broadcast_sent', `total=${result.total}, sent=${result.sent}, failed=${result.failed}`);
   reset(ctx);
-  return ctx.reply(`Xabar yuborildi.\nJami: ${result.total}\nYetib bordi: ${result.sent}\nBloklagan: ${result.blocked}\nXatolik: ${result.failed}`, adminKeyboard(ctx));
+  return ctx.telegram.sendMessage(
+    ctx.from.id,
+    `Xabar yuborish yakunlandi.\nJami: ${result.total}\nYetib bordi: ${result.sent}\nBloklagan: ${result.blocked}\nXatolik: ${result.failed}`,
+    { reply_markup: adminKeyboard(ctx).reply_markup }
+  );
 });
 
 bot.action('broadcast:cancel', async (ctx) => {
@@ -3827,9 +3973,13 @@ bot.on('text', async (ctx) => {
     return ctx.reply('Tugma turini tanlang:', broadcastButtonTypeKeyboard());
   }
   if (step === 'broadcast_button_type') {
-    const isKnownType = value === 'url' || value === 'web_app';
+    const isKnownType = value === 'url' || value === 'web_app' || value === 'command';
     if (!isKnownType) return ctx.reply('Tugma turini quyidagi tugmalar yordamida tanlang:');
     ctx.session.pendingButtonType = value;
+    if (value === 'command') {
+      ctx.session.step = 'broadcast_button_command';
+      return ctx.reply('Tugma bosilganda bajariladigan buyruqni tanlang:', broadcastCommandKeyboard());
+    }
     if (value === 'web_app') {
       ctx.session.pendingButtonUrl = getWebAppUrl();
       ctx.session.step = 'broadcast_button_color';
