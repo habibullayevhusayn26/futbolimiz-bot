@@ -67,7 +67,7 @@ const joinRequestChatSchema = new mongoose.Schema({
   username: { type: String, default: '' },
   linkedBy: { type: Number, default: null },
   paused: { type: Boolean, default: false },
-  welcomeMessage: { type: String, default: 'Sizni tez orada qabul qilamiz!' },
+  welcomeMessage: { type: String, default: 'Sizni tez orada qabul qilamiz! Kanalga qo\'shil uchun /start bosing!' },
   welcomeEntities: { type: [mongoose.Schema.Types.Mixed], default: [] },
   welcomeMediaType: { type: String, enum: ['', 'photo', 'video', 'animation'], default: '' },
   welcomeMediaFileId: { type: String, default: '' },
@@ -2566,7 +2566,7 @@ bot.action(/^join_chat:edit_welcome:(-?\d+)$/, async (ctx) => {
     step: 'join_welcome_media',
     joinRequestChatId: chatId,
     joinWelcomeDraft: {
-      message: chat.welcomeMessage || 'Sizni tez orada qabul qilamiz!',
+      message: chat.welcomeMessage || 'Sizni tez orada qabul qilamiz! Kanalga qo\'shilish uchun /start yuboring.',
       entities: chat.welcomeEntities || [],
       mediaType: chat.welcomeMediaType || '',
       mediaFileId: chat.welcomeMediaFileId || '',
@@ -2863,7 +2863,7 @@ bot.on('chat_join_request', async (ctx) => {
         request.user_chat_id || request.from.id,
         { ...linkedChat, title: linkedChat.title || request.chat.title },
         {
-          message: linkedChat.welcomeMessage || 'Sizni tez orada qabul qilamiz!',
+          message: linkedChat.welcomeMessage || 'Sizni tez orada qabul qilamiz! Kanalga qo\'shilish uchun /start yuboring.',
           entities: linkedChat.welcomeEntities || [],
           mediaType: linkedChat.welcomeMediaType || '',
           mediaFileId: linkedChat.welcomeMediaFileId || '',
